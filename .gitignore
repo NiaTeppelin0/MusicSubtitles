@@ -1,0 +1,35 @@
+# Build and distribution directories
+build/
+bin/
+out/
+target/
+build_output/
+jar_staging/
+*.jar
+*.class
+
+# Logs and error outputs
+*.log
+javac_err.txt
+javac_out.txt
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.gradle/
+.settings/
+.project
+.classpath
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.swp

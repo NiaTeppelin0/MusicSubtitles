@@ -1,0 +1,29 @@
+{
+  "providers": [
+    {
+      "type": "reference",
+      "id": "minecraft:include/space"
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:include/default",
+      "filter": {
+        "uniform": false
+      }
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:include/unifont"
+    },
+    {
+      "type": "bitmap",
+      "file": "yandexmusichud:font/mod_icon.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\uE000",
+        "\uE250"
+      ]
+    }
+  ]
+}

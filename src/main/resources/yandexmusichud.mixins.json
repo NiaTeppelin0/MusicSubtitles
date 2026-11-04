@@ -1,0 +1,8 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.example.yandexmusichud.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["PlayerListHudMixin"],
+  "injectors": { "defaultRequire": 0 }
+}

@@ -1,0 +1,11 @@
+Summary for MusicSubtitles-2.5.0-RELEASE.jar
+Decompiled with CFR 0.152
+
+
+com.example.yandexmusichud.lyrics.LyricsManager
+----------------------------
+
+httpGet(java.lang.String java.util.Map<java.lang.String, java.lang.String> int )
+  Loose catch block
+httpPost(java.lang.String java.lang.String int )
+  Loose catch block

@@ -1,0 +1,19 @@
+{
+  "key.category.yandexmusichud.music_subtitles": "Music Subtitles",
+  "key.categories.music_subtitles": "Music Subtitles",
+  "key.yandexmusichud.category": "Music Subtitles",
+  "key.yandexmusichud.play_pause": "Play / Pause",
+  "key.yandexmusichud.next_track": "Next Track",
+  "key.yandexmusichud.prev_track": "Previous Track",
+  "key.yandexmusichud.toggle_hud": "Toggle Music HUD",
+  "key.yandexmusichud.edit_hud": "Music & Subtitles Settings",
+  "key.yandexmusichud.toggle_subtitles": "Toggle Subtitles Mode",
+  "key.yandexmusichud.sync_earlier": "Calibration: Lyrics Earlier (-200ms)",
+  "key.yandexmusichud.sync_later": "Calibration: Lyrics Later (+200ms)",
+  "key.yandexmusichud.radial_menu": "Radial Action Menu",
+  "key.yandexmusichud.toggle_favorite": "Add / Remove Favorite",
+  "key.yandexmusichud.open_favorites": "Open Favorites Library",
+  "key.yandexmusichud.local_music": "My Music (Local Player)",
+  "text.yandexmusichud.audio_alignment": "Local Audio Alignment",
+  "text.yandexmusichud.audio_alignment_desc": "Use local audio analysis to accurately sync song lyrics when online timed lyrics are unavailable."
+}

@@ -1,0 +1,19 @@
+{
+  "key.category.yandexmusichud.music_subtitles": "Music Subtitles",
+  "key.categories.music_subtitles": "Music Subtitles",
+  "key.yandexmusichud.category": "Music Subtitles",
+  "key.yandexmusichud.play_pause": "Воспроизведение / Пауза",
+  "key.yandexmusichud.next_track": "Следующий трек",
+  "key.yandexmusichud.prev_track": "Предыдущий трек",
+  "key.yandexmusichud.toggle_hud": "Вкл/Выкл виджет плеера",
+  "key.yandexmusichud.edit_hud": "Настройки мода и субтитров",
+  "key.yandexmusichud.toggle_subtitles": "Переключить режим субтитров",
+  "key.yandexmusichud.sync_earlier": "Калибровка: Лирика раньше (-200мс)",
+  "key.yandexmusichud.sync_later": "Калибровка: Лирика позже (+200мс)",
+  "key.yandexmusichud.radial_menu": "Круговое меню действий",
+  "key.yandexmusichud.toggle_favorite": "В избранное / убрать из избранного",
+  "key.yandexmusichud.open_favorites": "Открыть библиотеку треков",
+  "key.yandexmusichud.local_music": "Моя музыка (Локальный плеер)",
+  "text.yandexmusichud.audio_alignment": "Локальный анализ аудио",
+  "text.yandexmusichud.audio_alignment_desc": "Использовать локальный анализ звука для синхронизации текста песен без онлайн-таймингов."
+}

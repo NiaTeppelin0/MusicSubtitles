@@ -1,0 +1,320 @@
+package com.example.yandexmusichud.network;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class TrackMetadataSanitizer {
+    private static final Pattern TRACK_NUMBER_PREFIX = Pattern.compile("^(?:track\\s*)?\\d{1,3}[.\\-_\\s]+(?=[A-Za-zА-Яа-яЁё0-9])", Pattern.CASE_INSENSITIVE);
+    private static final Pattern RADIO_PREFIX = Pattern.compile("^(?:record|радио\\s*рекорд|dfm|europa\\s*plus|европа\\s*плюс|energy|nrj|kiss\\s*fm|maximum|максимум|nashe|наше\\s*радио|retro\\s*fm|ретро\\s*фм)\\s*[:\\-|•~]+\\s*", Pattern.CASE_INSENSITIVE);
+    private static final Pattern VIDEO_NOISE_TAGS = Pattern.compile("(?i)[\\(\\[\\{][^\\)\\]\\}]*(?:official\\s*(?:music\\s*)?video|official\\s*video|official\\s*audio|audio\\s*track|lyric\\s*video|official\\s*visualizer|visualizer|video\\s*clip|music\\s*video|clip|клип|видео|премьера|аудио|\\baudio\\b|сниппет|муд\\s*видео|текст\\s*песни|слова\\s*песни|mv|hd|4k(?:\\s*60fps)?|1080p|720p|hq|uhd|full\\s*hd|soundtrack|ost|original\\s*soundtrack|remaster(?:ed)?|live\\s*performance|live\\s*session)[^\\)\\]\\}]*[\\)\\]\\}]");
+    private static final Pattern PROMO_TRAILING_NOISE = Pattern.compile("(?i)\\s*(?:[\\|•·~\\-–—]|\\s*\u002F\u002F)\\s*(?:премьера.*|official.*|клип.*|video.*|audio.*|lyric.*|текст\\s*песни.*|слова\\s*песни.*|release.*|out\\s*now.*)$");
+    private static final Pattern YEAR_TAGS = Pattern.compile("(?i)[\\(\\[](?:20[0-2]\\d|19[5-9]\\d)[\\)\\]]");
+    private static final Pattern BROWSER_TRAILING_NOISE = Pattern.compile("(?i)\\s*(?:[\\|•·~\\-–—]\\s*(?:youtube(?:\\s*music)?|soundcloud|spotify|vk|вконтакте|yandex|яндекс(?:\\s*музыка)?|слушать(?:\\s*онлайн)?(?:\\s*на\\s*яндекс\\s*музыке)?|apple\\s*music|deezer|music|video|audio))+\\s*$");
+    private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("(?i)\\.(?:mp3|wav|ogg|flac|m4a|aac|wma|opus)$");
+    private static final Pattern FEAT_IN_TITLE_PATTERN = Pattern.compile("(?i)[\\(\\[](?:feat\\.?|ft\\.?|featuring|with)\\s+([^\\]\\)]+)[\\)\\]]");
+    private static final Pattern FEAT_BARE_PATTERN = Pattern.compile("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|with)\\s+([^\\(\\)\\[\\]\\-]+)");
+    private static final Pattern REMASTER_PATTERN = Pattern.compile("(?i)[\\(\\[](?:\\d{4}\\s*remaster(?:ed)?|remaster(?:ed)?(?:\\s*\\d{4})?|deluxe(?:\\s*edition)?|anniversary(?:\\s*edition)?|special(?:\\s*edition)?|bonus\\s*track|radio\\s*edit|extended\\s*(?:mix|version)|album\\s*version)[\\)\\]]");
+    private static final Pattern LIVE_PATTERN = Pattern.compile("(?i)\\b(?:live|концерт|живой\\s*звук|live\\s*at|live\\s*from|live\\s*in)\\b");
+    private static final Pattern REMIX_PATTERN = Pattern.compile("(?i)\\b(?:remix|rmx|ремикс|club\\s*mix|vip\\s*mix|dub\\s*mix|edit)\\b");
+    private static final Pattern SPEED_UP_PATTERN = Pattern.compile("(?i)\\b(?:speed\\s*up|nightcore|sped\\s*up|fast\\s*version)\\b");
+    private static final Pattern SLOWED_PATTERN = Pattern.compile("(?i)\\b(?:slowed(?:\\s*(?:\\+|and)?\\s*reverb)?|reverb)\\b");
+    private static final Pattern ACOUSTIC_PATTERN = Pattern.compile("(?i)\\b(?:acoustic|акустика|unplugged|piano\\s*version)\\b");
+
+    public record SanitizedMetadata(
+        String cleanTitle,
+        String cleanArtist,
+        String searchTitle,
+        String searchArtist,
+        String primaryArtist,
+        List<String> featuredArtists,
+        String rawTitle,
+        String rawArtist,
+        boolean isLive,
+        boolean isRemix,
+        boolean isAcoustic,
+        boolean isSpeedUp,
+        boolean isSlowed
+    ) {}
+
+    public static SanitizedMetadata sanitize(String rawTitle, String rawArtist, String rawAlbum) {
+        String t = rawTitle != null ? rawTitle.trim() : "";
+        String a = rawArtist != null ? rawArtist.trim() : "";
+
+        t = BROWSER_TRAILING_NOISE.matcher(t).replaceFirst("");
+        a = BROWSER_TRAILING_NOISE.matcher(a).replaceFirst("");
+
+        t = PROMO_TRAILING_NOISE.matcher(t).replaceFirst("");
+        a = PROMO_TRAILING_NOISE.matcher(a).replaceFirst("");
+
+        t = normalizeDashes(t);
+        a = normalizeDashes(a);
+        a = a.replaceAll("(?i)\\s*-\\s*(?:topic|\u0442\u0435\u043c\u0430)$", "").trim();
+
+        t = FILE_EXTENSION_PATTERN.matcher(t).replaceFirst("");
+        a = FILE_EXTENSION_PATTERN.matcher(a).replaceFirst("");
+
+        t = RADIO_PREFIX.matcher(t).replaceFirst("");
+        t = TRACK_NUMBER_PREFIX.matcher(t).replaceFirst("");
+
+        boolean hasGenericArtist = isGenericArtist(a);
+
+        if (hasGenericArtist || a.isEmpty()) {
+            ParsedPair split = splitArtistTitle(t);
+            if (split != null) {
+                a = split.artist;
+                t = split.title;
+            }
+        } else if (t.contains(" - ") && !hasGenericArtist) {
+            ParsedPair split = splitArtistTitle(t);
+            if (split != null) {
+                if (isLikelyArtist(split.artist, a)) {
+                    t = split.title;
+                } else if (isLikelyArtist(split.title, a)) {
+                    t = split.artist;
+                } else if (!isVersionOrSubTag(split.title) && !isVersionOrSubTag(split.artist)) {
+                    a = split.artist;
+                    t = split.title;
+                }
+            }
+        }
+        t = PROMO_TRAILING_NOISE.matcher(t).replaceFirst("");
+
+        if (isLikelyInverted(a, t)) {
+            String temp = a;
+            a = t;
+            t = temp;
+        }
+
+        boolean isLive = LIVE_PATTERN.matcher(t).find() || LIVE_PATTERN.matcher(a).find();
+        boolean isRemix = REMIX_PATTERN.matcher(t).find() || REMIX_PATTERN.matcher(a).find();
+        boolean isAcoustic = ACOUSTIC_PATTERN.matcher(t).find() || ACOUSTIC_PATTERN.matcher(a).find();
+        boolean isSpeedUp = SPEED_UP_PATTERN.matcher(t).find() || SPEED_UP_PATTERN.matcher(a).find();
+        boolean isSlowed = SLOWED_PATTERN.matcher(t).find() || SLOWED_PATTERN.matcher(a).find();
+
+        List<String> featuredArtists = new ArrayList<String>();
+        Matcher featInTitle = FEAT_IN_TITLE_PATTERN.matcher(t);
+        if (featInTitle.find()) {
+            addFeaturedArtists(featuredArtists, featInTitle.group(1));
+            t = featInTitle.replaceFirst("").trim();
+        }
+
+        Matcher featBare = FEAT_BARE_PATTERN.matcher(t);
+        if (featBare.find()) {
+            addFeaturedArtists(featuredArtists, featBare.group(1));
+            t = featBare.replaceFirst("").trim();
+        }
+
+        Matcher featInArtist = FEAT_IN_TITLE_PATTERN.matcher(a);
+        if (featInArtist.find()) {
+            addFeaturedArtists(featuredArtists, featInArtist.group(1));
+            a = featInArtist.replaceFirst("").trim();
+        }
+
+        Matcher featBareArtist = FEAT_BARE_PATTERN.matcher(a);
+        if (featBareArtist.find()) {
+            addFeaturedArtists(featuredArtists, featBareArtist.group(1));
+            a = featBareArtist.replaceFirst("").trim();
+        }
+
+        for (int i = 0; i < 3; ++i) {
+            t = VIDEO_NOISE_TAGS.matcher(t).replaceAll("");
+            a = VIDEO_NOISE_TAGS.matcher(a).replaceAll("");
+            t = YEAR_TAGS.matcher(t).replaceAll("");
+            a = YEAR_TAGS.matcher(a).replaceAll("");
+        }
+
+        String searchTitle = cleanSearchText(t);
+        String searchArtist = cleanSearchText(a);
+
+        String cleanTitle = cleanDisplayText(t);
+        String cleanArtist = cleanDisplayText(a);
+
+        if (cleanTitle.isEmpty() && !cleanArtist.isEmpty()) {
+            cleanTitle = cleanArtist;
+            cleanArtist = "Музыка";
+        }
+
+        String primaryArtist = extractPrimaryArtist(cleanArtist);
+
+        return new SanitizedMetadata(
+            cleanTitle,
+            cleanArtist,
+            searchTitle,
+            searchArtist,
+            primaryArtist,
+            Collections.unmodifiableList(featuredArtists),
+            rawTitle != null ? rawTitle : "",
+            rawArtist != null ? rawArtist : "",
+            isLive,
+            isRemix,
+            isAcoustic,
+            isSpeedUp,
+            isSlowed
+        );
+    }
+
+    private static String normalizeDashes(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace('\u2014', '-')
+                .replace('\u2013', '-')
+                .replace('\u2212', '-')
+                .replace('\u2010', '-')
+                .replace('\u2015', '-');
+    }
+
+    private static String cleanSearchText(String s) {
+        if (s == null) {
+            return "";
+        }
+        String res = s;
+        for (int i = 0; i < 3; ++i) {
+            res = VIDEO_NOISE_TAGS.matcher(res).replaceAll("");
+            res = YEAR_TAGS.matcher(res).replaceAll("");
+            res = REMASTER_PATTERN.matcher(res).replaceAll("");
+        }
+        res = res.replaceAll("[\"\'«»“”„]", "");
+        res = res.replaceAll("\\s+", " ").trim();
+        return res;
+    }
+
+    private static String cleanDisplayText(String s) {
+        if (s == null) {
+            return "";
+        }
+        String res = s;
+        for (int i = 0; i < 3; ++i) {
+            res = VIDEO_NOISE_TAGS.matcher(res).replaceAll("");
+            res = YEAR_TAGS.matcher(res).replaceAll("");
+        }
+        res = res.replaceAll("[\"\'«»“”„]", "");
+        res = res.replaceAll("\\s+", " ").trim();
+        return res;
+    }
+
+    private static void addFeaturedArtists(List<String> list, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        String[] parts = text.split("[,&/xX]|(?i)\\s+and\\s+");
+        for (String p : parts) {
+            String trimmed = p.trim();
+            if (!trimmed.isEmpty() && !list.contains(trimmed)) {
+                list.add(trimmed);
+            }
+        }
+    }
+
+    public static String extractPrimaryArtist(String artist) {
+        if (artist == null || artist.isBlank()) {
+            return "";
+        }
+        String a = normalizeDashes(artist);
+        String[] split = a.split("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|with|&|x|vs\\.?)\\s+|,\\s*");
+        if (split.length > 0 && !split[0].isBlank()) {
+            return split[0].trim();
+        }
+        return artist.trim();
+    }
+
+    public static boolean isGenericArtist(String a) {
+        if (a == null || a.isBlank()) {
+            return true;
+        }
+        String s = a.trim().toLowerCase(Locale.ROOT);
+        return s.equals("youtube") || s.equals("youtube music") || s.equals("soundcloud") ||
+               s.equals("spotify") || s.equals("google chrome") || s.equals("chrome") ||
+               s.equals("chrome.exe") || s.equals("msedge") || s.equals("msedge.exe") ||
+               s.equals("opera") || s.equals("opera.exe") || s.equals("firefox") ||
+               s.equals("firefox.exe") || s.equals("brave") || s.equals("brave.exe") ||
+               s.equals("vivaldi") || s.equals("yandex") || s.equals("browser") ||
+               s.equals("яндекс") || s.equals("яндекс браузер") || s.equals("яндекс.браузер") ||
+               s.equals("media player") || s.equals("windows media player") || s.equals("vlc") ||
+               s.equals("aimp") || s.equals("foobar2000") || s.equals("unknown") ||
+               s.equals("unknown artist") || s.equals("неизвестный исполнитель") ||
+               s.equals("моя музыка") || s.equals("local") || s.equals("music");
+    }
+
+    private static boolean isLikelyArtist(String candidate, String knownArtist) {
+        if (candidate == null || knownArtist == null) {
+            return false;
+        }
+        String c = candidate.toLowerCase(Locale.ROOT);
+        String k = knownArtist.toLowerCase(Locale.ROOT);
+        return c.equals(k) || k.contains(c) || c.contains(k);
+    }
+
+    private static boolean isLikelyInverted(String artist, String title) {
+        if (artist == null || title == null) {
+            return false;
+        }
+        String a = artist.trim();
+        String t = title.trim();
+
+        if (a.endsWith(")") || a.endsWith("]")) {
+            if (!t.endsWith(")") && !t.endsWith("]")) {
+                String al = a.toLowerCase(Locale.ROOT);
+                if (al.contains("remix") || al.contains("version") || al.contains("live") ||
+                    al.contains("mix") || al.contains("edit") || al.contains("remaster") ||
+                    al.contains("acoustic") || al.contains("radio edit")) {
+                    return true;
+                }
+            }
+        }
+
+        if (a.startsWith("\"") && a.endsWith("\"") || a.startsWith("«") && a.endsWith("»")) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static ParsedPair splitArtistTitle(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String s = text.trim();
+
+        String[] delimiters = new String[] { " - ", " -- ", " | ", " \u002F\u002F ", " ~ ", " : " };
+        for (String delim : delimiters) {
+            int idx = s.indexOf(delim);
+            if (idx > 0 && idx + delim.length() < s.length()) {
+                String left = s.substring(0, idx).trim();
+                String right = s.substring(idx + delim.length()).trim();
+                if (!left.isEmpty() && !right.isEmpty()) {
+                    if (right.contains(" - ")) {
+                        String[] sub = right.split(" - ", 2);
+                        if (sub.length == 2 && isVersionOrSubTag(sub[1])) {
+                            return new ParsedPair(left, sub[0].trim() + " (" + sub[1].trim() + ")");
+                        }
+                    }
+                    return new ParsedPair(left, right);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean isVersionOrSubTag(String s) {
+        if (s == null) {
+            return false;
+        }
+        String l = s.trim().toLowerCase(Locale.ROOT);
+        return l.contains("live") || l.contains("remix") || l.contains("mix") ||
+               l.contains("version") || l.contains("acoustic") || l.contains("edit") ||
+               l.contains("remaster") || l.contains("topic") || l.contains("slowed") ||
+               l.contains("reverb") || l.contains("speed") || l.contains("sped") ||
+               l.contains("nightcore") || l.contains("instrumental") || l.contains("karaoke") ||
+               l.contains("cover") || l.contains("ost") || l.contains("soundtrack") ||
+               l.contains("bonus") || l.contains("deluxe") || l.contains("demo") ||
+               l.contains("part ") || l.contains("pt.") || l.contains("vol.") ||
+               l.contains("\u0447\u0430\u0441\u0442\u044c") || l.contains("intro") || l.contains("outro");
+    }
+
+    private record ParsedPair(String artist, String title) {}
+}
