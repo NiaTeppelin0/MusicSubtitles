@@ -94,6 +94,10 @@ public class PlayerBadgeManager {
     private String currentRoomPassword = null;
     private volatile TrackState syncedTrack = null;
     private long lastTrackUpdateSent = 0L;
+    private String lastResolvedTrackKey = "";
+    private String cachedResolvedDirectUrl = "";
+    private String cachedResolvedCoverUrl = "";
+    private volatile boolean isResolvingDirectUrl = false;
 
     public static record RoomMember(String name, String uuid, boolean isHost, int pingMs) {}
     private final List<RoomMember> roomMembers = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -697,6 +701,10 @@ public class PlayerBadgeManager {
         this.currentRoomPassword = null;
         this.syncedTrack = null;
         this.roomMembers.clear();
+        this.lastResolvedTrackKey = "";
+        this.cachedResolvedDirectUrl = "";
+        this.cachedResolvedCoverUrl = "";
+        this.isResolvingDirectUrl = false;
         com.example.yandexmusichud.local.LocalMusicPlayer.getInstance().stop();
         com.example.yandexmusichud.compat.VoiceChatCompat.onRoomLeft();
     }
@@ -716,12 +724,33 @@ public class PlayerBadgeManager {
         String directMp3Url = state.directUrl();
         String coverUrl = state.coverUrl() != null ? state.coverUrl() : "";
         if ((directMp3Url == null || directMp3Url.isEmpty()) && !state.artist().isEmpty()) {
-            String[] res = com.example.yandexmusichud.local.SafeModeStreamer.INSTANCE.resolveDirectMp3Url(state.artist(), state.title());
-            if (res != null && res.length > 0 && res[0] != null && !res[0].isEmpty()) {
-                directMp3Url = res[0];
-                if (coverUrl.isEmpty() && res.length > 1 && res[1] != null) {
-                    coverUrl = res[1];
+            String trackKey = (state.artist() + " - " + state.title()).toLowerCase();
+            if (trackKey.equals(this.lastResolvedTrackKey)) {
+                directMp3Url = this.cachedResolvedDirectUrl;
+                if (coverUrl.isEmpty()) {
+                    coverUrl = this.cachedResolvedCoverUrl;
                 }
+            } else if (!this.isResolvingDirectUrl) {
+                this.lastResolvedTrackKey = trackKey;
+                this.cachedResolvedDirectUrl = "";
+                this.cachedResolvedCoverUrl = "";
+                this.isResolvingDirectUrl = true;
+                final String fArtist = state.artist();
+                final String fTitle = state.title();
+                java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        String[] res = com.example.yandexmusichud.local.SafeModeStreamer.INSTANCE.resolveDirectMp3Url(fArtist, fTitle);
+                        if (res != null && res.length > 0 && res[0] != null && !res[0].isEmpty()) {
+                            cachedResolvedDirectUrl = res[0];
+                            if (res.length > 1 && res[1] != null) {
+                                cachedResolvedCoverUrl = res[1];
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    } finally {
+                        isResolvingDirectUrl = false;
+                    }
+                });
             }
         }
         if (directMp3Url == null) {
