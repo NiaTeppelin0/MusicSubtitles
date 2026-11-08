@@ -30,6 +30,10 @@ public class NowPlayingClient {
     private volatile boolean connected = false;
     private long lastRawReportedPosMs = -1L;
     private long lastRawPosChangeTimeMs = 0L;
+    private String lastRawTitle = null;
+    private String lastRawArtist = null;
+    private String lastRawAlbum = null;
+    private TrackMetadataSanitizer.SanitizedMetadata cachedSanitizedMeta = null;
 
     public NowPlayingClient(CoverTextureManager coverManager) {
         this.coverManager = coverManager;
@@ -126,7 +130,16 @@ public class NowPlayingClient {
                     String rawTitle = this.getStringOrDefault(json, "title", "");
                     String rawArtist = this.getStringOrDefault(json, "artist", "");
                     String album = this.getStringOrDefault(json, "album", "").replace('\u2014', '-').replace('\u2013', '-');
-                    TrackMetadataSanitizer.SanitizedMetadata meta = TrackMetadataSanitizer.sanitize(rawTitle, rawArtist, album);
+                    TrackMetadataSanitizer.SanitizedMetadata meta;
+                    if (this.cachedSanitizedMeta != null && rawTitle.equals(this.lastRawTitle) && rawArtist.equals(this.lastRawArtist) && album.equals(this.lastRawAlbum)) {
+                        meta = this.cachedSanitizedMeta;
+                    } else {
+                        meta = TrackMetadataSanitizer.sanitize(rawTitle, rawArtist, album);
+                        this.lastRawTitle = rawTitle;
+                        this.lastRawArtist = rawArtist;
+                        this.lastRawAlbum = album;
+                        this.cachedSanitizedMeta = meta;
+                    }
                     String title = meta.cleanTitle();
                     String artist = meta.cleanArtist();
                     String status = this.getStringOrDefault(json, "status", "stopped");

@@ -144,6 +144,9 @@ public class PlayerBadgeManager {
         if (mc.field_1687 == null || mc.field_1724 == null || mc.field_1773 == null) {
             return;
         }
+        if (MOD_USERS.isEmpty() && !mc.method_1496() && !HudConfig.INSTANCE.showOwnNametagBadge) {
+            return;
+        }
         class_4587 matrices = context.matrices();
         class_4597 consumers = context.consumers();
         if (matrices == null || consumers == null) {
@@ -234,22 +237,30 @@ public class PlayerBadgeManager {
         if (mc.method_1562() == null || mc.field_1705 == null) {
             return false;
         }
+        boolean isSingle = mc.method_1496();
+        if (MOD_USERS.isEmpty() && !isSingle && !HudConfig.INSTANCE.showOwnNametagBadge) {
+            return false;
+        }
         String s = text.getString();
-        class_355 playerList = mc.field_1705.method_1750();
+        if (mc.field_1724 != null && (isSingle || HudConfig.INSTANCE.showOwnNametagBadge)) {
+            class_2561 myText = mc.field_1724.method_5477();
+            if (myText != null && s.contains(myText.getString())) {
+                return true;
+            }
+        }
+        if (MOD_USERS.isEmpty()) {
+            return false;
+        }
         for (class_640 entry : mc.method_1562().method_2880()) {
             if (entry == null || entry.method_2966() == null) {
                 continue;
             }
             UUID uuid = entry.method_2966().id();
-            boolean isMod = (uuid != null && MOD_USERS.contains(uuid))
-                || (mc.field_1724 != null && uuid != null && uuid.equals(mc.field_1724.method_5667()))
-                || mc.method_1496();
-            if (!isMod) {
-                continue;
-            }
-            String name = entry.method_2966().name();
-            if (name != null && !name.isEmpty() && s.contains(name)) {
-                return true;
+            if (uuid != null && MOD_USERS.contains(uuid)) {
+                String name = entry.method_2966().name();
+                if (name != null && !name.isEmpty() && s.contains(name)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -459,18 +470,6 @@ public class PlayerBadgeManager {
     }
 
     private void updateTabBadges(class_310 mc) {
-        if (mc.method_1562() == null) {
-            return;
-        }
-        for (class_640 entry : mc.method_1562().method_2880()) {
-            if (entry == null) {
-                continue;
-            }
-            class_2561 curName = entry.method_2971();
-            if (curName != null && curName.getString().contains("\uE000")) {
-                entry.method_2962(null);
-            }
-        }
     }
 
     private void checkRelayConnection(class_310 mc, long now) {
