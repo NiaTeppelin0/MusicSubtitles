@@ -176,7 +176,7 @@ public class LocalMusicTrack {
                                         } catch (Exception ignored) {}
                                     }
                                 } else if (("APIC".equals(frameId) || "PIC".equals(frameId)) && extractedCover == null) {
-                                    extractedCover = decodeApicFrame(frameBytes);
+                                    extractedCover = decodeApicFrame(frameBytes, "PIC".equals(frameId));
                                 }
                             }
                         }
@@ -268,8 +268,17 @@ public class LocalMusicTrack {
             charset = StandardCharsets.UTF_8;
         }
         int len = bytes.length - start;
-        while (len > 0 && bytes[start + len - 1] == 0) {
-            len--;
+        if (enc == 1 || enc == 2) {
+            while (len >= 2 && bytes[start + len - 2] == 0 && bytes[start + len - 1] == 0) {
+                len -= 2;
+            }
+            if ((len & 1) == 1 && bytes[start + len - 1] == 0) {
+                len--;
+            }
+        } else {
+            while (len > 0 && bytes[start + len - 1] == 0) {
+                len--;
+            }
         }
         if (len <= 0) {
             return null;
@@ -290,33 +299,39 @@ public class LocalMusicTrack {
             }
         }
         try {
-            return new String(bytes, start, len, charset).trim().replace("\u0000", "");
+            return new String(bytes, start, len, charset).replace("\u0000", "").trim();
         } catch (Exception e) {
             return null;
         }
     }
 
-    private static byte[] decodeApicFrame(byte[] bytes) {
+    private static byte[] decodeApicFrame(byte[] bytes, boolean picFormat) {
         if (bytes == null || bytes.length < 10) {
             return null;
         }
         int enc = bytes[0] & 0xFF;
         int pos = 1;
-        while (pos < bytes.length && bytes[pos] != 0) {
+        if (picFormat) {
+            pos += 3;
+        } else {
+            while (pos < bytes.length && bytes[pos] != 0) {
+                pos++;
+            }
+            if (pos >= bytes.length) {
+                return null;
+            }
             pos++;
         }
         if (pos >= bytes.length) {
             return null;
         }
         pos++;
-        if (pos >= bytes.length) {
-            return null;
-        }
-        pos++;
+        boolean foundDescEnd = false;
         if (enc == 1 || enc == 2) {
             while (pos + 1 < bytes.length) {
                 if (bytes[pos] == 0 && bytes[pos + 1] == 0) {
                     pos += 2;
+                    foundDescEnd = true;
                     break;
                 }
                 pos += 2;
@@ -325,11 +340,34 @@ public class LocalMusicTrack {
             while (pos < bytes.length && bytes[pos] != 0) {
                 pos++;
             }
-            pos++;
+            if (pos < bytes.length) {
+                pos++;
+                foundDescEnd = true;
+            }
         }
-        if (pos >= bytes.length) {
+        if (!foundDescEnd || pos >= bytes.length) {
             return null;
         }
         return Arrays.copyOfRange(bytes, pos, bytes.length);
+    }
+
+    private Path normalizedPath() {
+        return this.path != null ? this.path.toAbsolutePath().normalize() : null;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof LocalMusicTrack other)) {
+            return false;
+        }
+        return java.util.Objects.equals(this.normalizedPath(), other.normalizedPath());
+    }
+
+    @Override
+    public int hashCode() {
+        return java.util.Objects.hashCode(this.normalizedPath());
     }
 }

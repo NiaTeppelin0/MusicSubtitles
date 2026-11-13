@@ -59,7 +59,16 @@
 
             if (!bestTrack || !bestTrack.baseUrl) return;
 
-            const resp = await fetch(bestTrack.baseUrl + '&fmt=json3');
+            let json3Url;
+            try {
+                const u = new URL(bestTrack.baseUrl, window.location.href);
+                u.searchParams.set('fmt', 'json3');
+                json3Url = u.toString();
+            } catch {
+                json3Url = bestTrack.baseUrl + (bestTrack.baseUrl.includes('?') ? '&' : '?') + 'fmt=json3';
+            }
+
+            const resp = await fetch(json3Url);
             if (!resp.ok) return;
 
             const data = await resp.json();
@@ -79,11 +88,12 @@
 
             if (lines.length > 0) {
                 const title = getVideoTitle();
-                await fetch(TRANSCRIPT_URL, {
+                const postResp = await fetch(TRANSCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ videoTitle: title, lines: lines })
                 });
+                if (!postResp.ok) return;
                 transcriptSentForVideo = vid;
                 showSyncNotice(`⚡ Субтитры синхронизированы с Minecraft (${lines.length} строк)`);
             }
@@ -128,7 +138,7 @@
             || document.getElementById('movie_player')
             || document.querySelector('.html5-video-player')
             || document.body;
-        if (!playerRoot || playerRoot === observedRoot) return;
+        if (!playerRoot || (playerRoot === observedRoot && observedRoot.isConnected)) return;
         captionObserver.disconnect();
         observedRoot = playerRoot;
         captionObserver.observe(playerRoot, { childList: true, subtree: true, characterData: true });
@@ -179,6 +189,8 @@
 
     setupCaptionObserver();
     window.addEventListener('yt-navigate-finish', () => {
+        lastPushedText = '';
+        lastPushTime = 0;
         bindCaptionObserverTarget();
         setTimeout(trySyncFullTranscript, 1200);
     });

@@ -201,7 +201,7 @@ public class SubtitleBubble {
             float t = Math.min(1.0f, (float)elapsed / (float)this.fadeOutDurationMs);
             return (this.isFastPaced ? -6.0f : -14.0f) * SubtitleBubble.easeOutCubic(t);
         }
-        if (trackPosMs > this.line.endMs) {
+        if (this.line != null && trackPosMs > this.line.endMs) {
             long overtime = trackPosMs - this.line.endMs;
             float t = Math.min(1.0f, (float)overtime / (this.isFastPaced ? 140.0f : 400.0f));
             return (this.isFastPaced ? -5.0f : -12.0f) * SubtitleBubble.easeOutCubic(t);
@@ -251,7 +251,7 @@ public class SubtitleBubble {
             float fade = 1.0f - progress * progress * (3.0f - 2.0f * progress);
             sysAlpha *= Math.max(0.0f, Math.min(1.0f, fade));
         }
-        if (trackPosMs > this.line.endMs) {
+        if (this.line != null && trackPosMs > this.line.endMs) {
             long overtime = trackPosMs - this.line.endMs;
             if (isMiside) {
                 if (this.charPhysics != null) {

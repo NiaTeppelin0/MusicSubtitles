@@ -146,6 +146,7 @@ public class MusicHudRenderer {
         class_310 mc = class_310.method_1551();
         if (mc.field_1724 == null || mc.field_1690.field_1842) {
             lastMicroControlsVisible = false;
+            lastCancelBtnVisible = false;
             return;
         }
         TwitchAlertQueue.INSTANCE.update();
@@ -166,6 +167,7 @@ public class MusicHudRenderer {
 
         if (!HudConfig.INSTANCE.enabled) {
             lastMicroControlsVisible = false;
+            lastCancelBtnVisible = false;
             return;
         }
         TrackState state = this.client.getState();
@@ -724,8 +726,12 @@ public class MusicHudRenderer {
             }
             int textX = mirrorLayout ? waveX + totalWaveW + 8 : coverX + coverSize + 8;
             int maxTextW = Math.max(40, baseW - coverSize - totalWaveW - coverMargin * 2 - 20);
+            int titleX = (mirrorLayout && this.hoverControlsAlpha > 0.1f) ? Math.max(textX, 76) : textX;
+            int titleMaxW = this.hoverControlsAlpha > 0.1f
+                ? (mirrorLayout ? Math.max(36, coverX - 8 - titleX) : Math.max(36, Math.min(maxTextW, (baseW - 76) - titleX)))
+                : maxTextW;
             int titleY = isLarge ? 10 : 7;
-            this.renderMarqueeText(context, textRenderer, title, textX, titleY, maxTextW, alpha << 24 | 0xFFFFFF, now, true);
+            this.renderMarqueeText(context, textRenderer, title, titleX, titleY, titleMaxW, alpha << 24 | 0xFFFFFF, now, true);
             if (activeLine != null && activeLine.text != null && !activeLine.text.isEmpty()) {
                 this.renderMiniKaraokeCapsule(context, textRenderer, activeLine, null, currentPosMs, textX, titleY + (isLarge ? 12 : 10), maxTextW, 12, alpha, domColor, now, true);
             } else {
@@ -733,10 +739,14 @@ public class MusicHudRenderer {
                 this.renderMarqueeText(context, textRenderer, subLine, textX, titleY + (isLarge ? 13 : 11), maxTextW, alpha << 24 | 0x94A3B8, now, false);
             }
             if (HudConfig.INSTANCE.showProgressBar) {
+                int barHeight = class_3532.method_15340((int)HudConfig.INSTANCE.progressBarHeight, (int)2, (int)6);
                 int barPad = Math.max(16, r - 4);
                 int barW2 = baseW - barPad * 2;
-                int barY = baseH - 5;
-                MusicHudRenderer.renderProgressBarWithPlayhead(context, barPad, barY, barW2, 2, state.getProgress(), alpha, domColor, now);
+                int barY = baseH - barHeight - 3;
+                int fillCol = (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFCC00
+                    ? (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF)
+                    : domColor;
+                MusicHudRenderer.renderProgressBarWithPlayhead(context, barPad, barY, barW2, barHeight, state.getProgress(), alpha, fillCol, now);
             }
             this.renderHoverMicroControls(context, textRenderer, state, isFav, alpha, mirrorLayout, baseW, finalX, finalY, scale, mouseScreenX, mouseScreenY);
             return;
@@ -804,8 +814,11 @@ public class MusicHudRenderer {
         int maxTextWidth = Math.max(48, baseW - (coverMargin * 2 + coverSize + 10 + vinylExtraOffset));
         int titleColor = alpha << 24 | 0xF8FAFC;
         int artistColor = alpha << 24 | 0x94A3B8;
-        int titleMaxW = this.hoverControlsAlpha > 0.1f ? Math.max(36, maxTextWidth - 68) : maxTextWidth;
-        this.renderMarqueeText(context, textRenderer, title, textX, textY, titleMaxW, titleColor, now, true);
+        int titleX = (mirrorLayout && this.hoverControlsAlpha > 0.1f) ? Math.max(textX, 76) : textX;
+        int titleMaxW = this.hoverControlsAlpha > 0.1f
+            ? (mirrorLayout ? Math.max(36, maxTextWidth - (titleX - textX)) : Math.max(36, Math.min(maxTextWidth, (baseW - 76) - titleX)))
+            : maxTextWidth;
+        this.renderMarqueeText(context, textRenderer, title, titleX, textY, titleMaxW, titleColor, now, true);
         this.renderMarqueeText(context, textRenderer, artist, textX, textY + (showKaraokeStrip ? (isLarge ? 12 : 11) : 13), maxTextWidth, artistColor, now, false);
 
         int metaRowY = textY + (showKaraokeStrip ? (isLarge ? 24 : 22) : 27);
@@ -889,17 +902,19 @@ public class MusicHudRenderer {
             context.method_51433(textRenderer, starIcon, starDrawX, badgeY, starColor, isFav);
             context.method_51433(textRenderer, timeText, textX + maxTextWidth - timeWidth, badgeY, timeColor, false);
         } else {
-            int eqX = coverX + coverSize - 15;
-            int eqY = coverY + coverSize - 12;
-            MusicHudRenderer.renderRoundedRect(context, eqX - 1, eqY - 1, 15, 12, 3, (int)((float)alpha * 0.85f) << 24 | 0x0A0D14);
-            for (int b = 0; b < 4; ++b) {
-                float phase = (float)b * 1.35f;
-                float speed = 0.008f + (float)b * 0.003f;
-                float barH = state.isPlaying() ? (float)(Math.sin((double)now * (double)speed + (double)phase) * 0.45 + 0.55) * 7.5f + 2.0f : 2.0f;
-                int bx = eqX + b * 3 + 1;
-                int by = eqY + 9 - (int)barH;
-                int bColor = alpha << 24 | (state.isPlaying() ? domColor : 0x64748B);
-                context.method_25294(bx, by, bx + 2, eqY + 9, bColor);
+            if (HudConfig.INSTANCE.showEqualizer) {
+                int eqX = coverX + coverSize - 15;
+                int eqY = coverY + coverSize - 12;
+                MusicHudRenderer.renderRoundedRect(context, eqX - 1, eqY - 1, 15, 12, 3, (int)((float)alpha * 0.85f) << 24 | 0x0A0D14);
+                for (int b = 0; b < 4; ++b) {
+                    float phase = (float)b * 1.35f;
+                    float speed = 0.008f + (float)b * 0.003f;
+                    float barH = state.isPlaying() ? (float)(Math.sin((double)now * (double)speed + (double)phase) * 0.45 + 0.55) * 7.5f + 2.0f : 2.0f;
+                    int bx = eqX + b * 3 + 1;
+                    int by = eqY + 9 - (int)barH;
+                    int bColor = alpha << 24 | (state.isPlaying() ? domColor : 0x64748B);
+                    context.method_25294(bx, by, bx + 2, eqY + 9, bColor);
+                }
             }
             if (isFav) {
                 MusicHudRenderer.renderRoundedRect(context, textX - 2, metaRowY - 1, 13, 11, 3, (int)((float)alpha * 0.22f) << 24 | 0xFFD700);
@@ -936,7 +951,7 @@ public class MusicHudRenderer {
             int barPad = Math.max(r + 2, 8);
             int barW = baseW - barPad * 2;
             int barY = baseH - barHeight - (isLarge ? 4 : 3);
-            int fillCol = (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFFFFF && (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFCC00
+            int fillCol = (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFCC00
                 ? (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF)
                 : domColor;
             MusicHudRenderer.renderProgressBarWithPlayhead(context, barPad, barY, barW, barHeight, state.getProgress(), alpha, fillCol, now);
@@ -946,6 +961,7 @@ public class MusicHudRenderer {
     }
 
     public static void renderProgressBarWithPlayhead(class_332 context, int barX, int barY, int barW, int barHeight, float progress, int alpha, int fillRgb, long now) {
+        alpha = class_3532.method_15340(alpha, 0, 255);
         int barBgColor = (int)((float)alpha * 0.55f) << 24 | 0x161B26;
         int barFillColor = alpha << 24 | (fillRgb & 0xFFFFFF);
         MusicHudRenderer.renderRoundedRect(context, barX, barY, barW, barHeight, Math.max(1, barHeight / 2), barBgColor);
@@ -1215,8 +1231,10 @@ public class MusicHudRenderer {
             context.method_51433(tr, "Предпросмотр трека", textX, titleY, -1, true);
             context.method_51433(tr, "♪ Музыка в ночи", textX, titleY + (isLarge ? 13 : 11), 0xFF000000 | domColor, false);
             if (HudConfig.INSTANCE.showProgressBar) {
+                int barHeight = class_3532.method_15340(HudConfig.INSTANCE.progressBarHeight, 2, 6);
                 int barPad = Math.max(16, r - 4);
-                MusicHudRenderer.renderProgressBarWithPlayhead(context, barPad, baseH - 5, baseW - barPad * 2, 2, 0.45f, 255, domColor, now);
+                int fillCol = (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFCC00 ? (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) : domColor;
+                MusicHudRenderer.renderProgressBarWithPlayhead(context, barPad, baseH - barHeight - 3, baseW - barPad * 2, barHeight, 0.45f, 255, fillCol, now);
             }
             return;
         }
@@ -1288,7 +1306,7 @@ public class MusicHudRenderer {
             int barPad = Math.max(r + 2, 8);
             int barW = baseW - barPad * 2;
             int barY = baseH - barHeight - (isLarge ? 4 : 3);
-            int fillCol = (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFFFFF && (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFCC00
+            int fillCol = (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF) != 0xFFCC00
                 ? (HudConfig.INSTANCE.progressBarColor & 0xFFFFFF)
                 : domColor;
             MusicHudRenderer.renderProgressBarWithPlayhead(context, barPad, barY, barW, barHeight, 0.45f, 255, fillCol, now);

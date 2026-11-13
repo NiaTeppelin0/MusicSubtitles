@@ -171,7 +171,8 @@ public class MusicControlKeybinds {
             HudConfig.INSTANCE.subtitlesEnabled = true;
             HudConfig.INSTANCE.subtitlesMode = "WORLD_3D";
         } else {
-            switch (HudConfig.INSTANCE.subtitlesMode) {
+            String curMode = HudConfig.INSTANCE.subtitlesMode != null ? HudConfig.INSTANCE.subtitlesMode : "WORLD_3D";
+            switch (curMode) {
                 case "WORLD_3D": {
                     HudConfig.INSTANCE.subtitlesMode = "WORLD_BLOCK";
                     break;
@@ -205,7 +206,8 @@ public class MusicControlKeybinds {
             if (!HudConfig.INSTANCE.subtitlesEnabled) {
                 modeName = "\u00a7c\u0412\u042b\u041a\u041b";
             } else {
-                modeName = switch (HudConfig.INSTANCE.subtitlesMode) {
+                String safeMode = HudConfig.INSTANCE.subtitlesMode != null ? HudConfig.INSTANCE.subtitlesMode : "";
+                modeName = switch (safeMode) {
                     case "WORLD_3D" -> "\u00a7a3D \u0432 \u043c\u0438\u0440\u0435";
                     case "WORLD_BLOCK", "WORLD_SURFACE" -> "\u00a7b3D \u043d\u0430 \u0431\u043b\u043e\u043a\u0430\u0445";
                     case "HUD_BOTTOM" -> "\u00a7e2D \u0441\u043d\u0438\u0437\u0443";

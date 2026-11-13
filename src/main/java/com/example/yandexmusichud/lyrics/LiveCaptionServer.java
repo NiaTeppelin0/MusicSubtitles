@@ -153,15 +153,20 @@ public class LiveCaptionServer {
                 return;
             }
             try (InputStream is = exchange.getRequestBody();){
-                long durationMs;
                 String body = LiveCaptionServer.readLimitedBody(is, MAX_BODY_BYTES);
                 if (body == null) {
                     LiveCaptionServer.sendResponse(exchange, 413, "{\"error\":\"Payload too large\"}");
                     return;
                 }
-                JsonObject json = JsonParser.parseString((String)body).getAsJsonObject();
+                JsonElement parsed = JsonParser.parseString((String)body);
+                if (parsed == null || !parsed.isJsonObject()) {
+                    LiveCaptionServer.sendResponse(exchange, 400, "{\"error\":\"Invalid JSON\"}");
+                    return;
+                }
+                JsonObject json = parsed.getAsJsonObject();
                 String text = json.has("text") && json.get("text").isJsonPrimitive() ? json.get("text").getAsString() : "";
-                long l = durationMs = json.has("durationMs") && json.get("durationMs").isJsonPrimitive() ? json.get("durationMs").getAsLong() : 3500L;
+                long rawDuration = json.has("durationMs") && json.get("durationMs").isJsonPrimitive() && json.getAsJsonPrimitive("durationMs").isNumber() ? json.getAsJsonPrimitive("durationMs").getAsLong() : 3500L;
+                long durationMs = Math.max(250L, Math.min(30000L, rawDuration));
                 if (!text.isEmpty()) {
                     LiveCaptionServer.this.lyricsManager.pushLiveCaption(text, durationMs);
                     LiveCaptionServer.sendResponse(exchange, 200, "{\"success\":true}");
@@ -170,9 +175,10 @@ public class LiveCaptionServer {
                 }
             }
             catch (Exception e) {
+                int code = e instanceof com.google.gson.JsonParseException || e instanceof NumberFormatException ? 400 : 500;
                 JsonObject err = new JsonObject();
                 err.addProperty("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-                LiveCaptionServer.sendResponse(exchange, 500, err.toString());
+                LiveCaptionServer.sendResponse(exchange, code, err.toString());
             }
         }
     }
@@ -203,7 +209,12 @@ public class LiveCaptionServer {
                     LiveCaptionServer.sendResponse(exchange, 413, "{\"error\":\"Payload too large\"}");
                     return;
                 }
-                JsonObject json = JsonParser.parseString((String)body).getAsJsonObject();
+                JsonElement parsed = JsonParser.parseString((String)body);
+                if (parsed == null || !parsed.isJsonObject()) {
+                    LiveCaptionServer.sendResponse(exchange, 400, "{\"error\":\"Invalid JSON\"}");
+                    return;
+                }
+                JsonObject json = parsed.getAsJsonObject();
                 String videoTitle = json.has("videoTitle") && json.get("videoTitle").isJsonPrimitive() ? json.get("videoTitle").getAsString() : "";
                 ArrayList<LyricLine> lines = new ArrayList<LyricLine>();
                 if (json.has("lines") && json.get("lines").isJsonArray()) {
@@ -211,8 +222,9 @@ public class LiveCaptionServer {
                     for (JsonElement elem : arr) {
                         if (!elem.isJsonObject()) continue;
                         JsonObject obj = elem.getAsJsonObject();
-                        long startMs = obj.has("startMs") && obj.get("startMs").isJsonPrimitive() ? obj.get("startMs").getAsLong() : 0L;
-                        long endMs = obj.has("endMs") && obj.get("endMs").isJsonPrimitive() ? obj.get("endMs").getAsLong() : startMs + 3500L;
+                        long startMs = obj.has("startMs") && obj.get("startMs").isJsonPrimitive() && obj.getAsJsonPrimitive("startMs").isNumber() ? Math.max(0L, obj.getAsJsonPrimitive("startMs").getAsLong()) : 0L;
+                        long endMs = obj.has("endMs") && obj.get("endMs").isJsonPrimitive() && obj.getAsJsonPrimitive("endMs").isNumber() ? obj.getAsJsonPrimitive("endMs").getAsLong() : startMs + 3500L;
+                        endMs = Math.max(startMs + 100L, endMs);
                         String text = obj.has("text") && obj.get("text").isJsonPrimitive() ? obj.get("text").getAsString() : "";
                         if (text.trim().isEmpty()) continue;
                         lines.add(new LyricLine(startMs, endMs, text.trim(), null));
@@ -226,9 +238,10 @@ public class LiveCaptionServer {
                 }
             }
             catch (Exception e) {
+                int code = e instanceof com.google.gson.JsonParseException || e instanceof NumberFormatException ? 400 : 500;
                 JsonObject err = new JsonObject();
                 err.addProperty("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-                LiveCaptionServer.sendResponse(exchange, 500, err.toString());
+                LiveCaptionServer.sendResponse(exchange, code, err.toString());
             }
         }
     }

@@ -181,7 +181,7 @@ extends class_437 {
         int perCol = (this.items.size() + 1) / 2;
         int rowH = this.field_22790 < 300 ? 19 : (this.field_22790 < 350 ? 23 : 24);
         int rowGap = this.field_22790 < 300 ? 2 : (this.field_22790 < 350 ? 3 : 4);
-        int startY = this.field_22790 < 300 ? 44 : (this.field_22790 < 350 ? 58 : 72);
+        int startY = this.field_22790 < 300 ? 52 : (this.field_22790 < 350 ? 58 : 72);
         for (int i = 0; i < this.items.size(); ++i) {
             KeybindItem item = this.items.get(i);
             boolean col = i >= perCol;
@@ -329,7 +329,7 @@ extends class_437 {
         int perCol = (this.items.size() + 1) / 2;
         int rowH = this.field_22790 < 300 ? 19 : (this.field_22790 < 350 ? 23 : 24);
         int rowGap = this.field_22790 < 300 ? 2 : (this.field_22790 < 350 ? 3 : 4);
-        int startY = this.field_22790 < 300 ? 44 : (this.field_22790 < 350 ? 58 : 72);
+        int startY = this.field_22790 < 300 ? 52 : (this.field_22790 < 350 ? 58 : 72);
         this.hoveredIndex = -1;
         for (int i = 0; i < this.items.size(); ++i) {
             int keycapBorder;

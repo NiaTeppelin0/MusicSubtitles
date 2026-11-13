@@ -287,19 +287,26 @@ public class CoverTextureManager {
     }
 
     public void resetToDefault() {
-        this.decodeGeneration.incrementAndGet();
+        int resetGen = this.decodeGeneration.incrementAndGet();
         this.dominantColor = 7101671;
-        if (this.hasCustomCover) {
+        this.lastBase64 = null;
+        if (this.hasCustomCover || (this.currentCoverId != DEFAULT_COVER && this.currentCoverId != ROUNDED_DEFAULT_COVER)) {
+            this.hasCustomCover = false;
             class_310 mc = class_310.method_1551();
             if (mc != null) {
                 mc.execute(() -> {
-                    this.previousCoverId = this.currentCoverId;
-                    this.coverChangeTimestamp = System.currentTimeMillis();
+                    if (resetGen != this.decodeGeneration.get()) {
+                        return;
+                    }
+                    class_2960 defCover = this.getDefaultCover();
+                    if (this.currentCoverId != defCover && this.currentCoverId != DEFAULT_COVER) {
+                        this.previousCoverId = this.currentCoverId;
+                        this.coverChangeTimestamp = System.currentTimeMillis();
+                    }
                     this.hasCustomCover = false;
-                    this.currentCoverId = this.getDefaultCover();
+                    this.currentCoverId = defCover;
                 });
             } else {
-                this.hasCustomCover = false;
                 this.currentCoverId = DEFAULT_COVER;
             }
         }

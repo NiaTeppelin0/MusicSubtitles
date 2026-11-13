@@ -74,7 +74,7 @@ implements ClientModInitializer {
     }
 
     public void restartHelper() {
-        new Thread(() -> {
+        Thread restartThread = new Thread(() -> {
             if (this.helperManager != null) {
                 this.helperManager.stop();
                 int p = this.helperManager.start();
@@ -83,7 +83,9 @@ implements ClientModInitializer {
                     this.nowPlayingClient.start(p);
                 }
             }
-        }, "MusicSubtitles-HelperRestarter").start();
+        }, "MusicSubtitles-HelperRestarter");
+        restartThread.setDaemon(true);
+        restartThread.start();
     }
 
     public void onInitializeClient() {
@@ -252,15 +254,16 @@ implements ClientModInitializer {
                 mc.execute(() -> mc.method_1507((class_437)new com.example.yandexmusichud.hud.ModTutorialScreen(mc.field_1755)));
                 return 1;
             }));
-            root.executes(ctx -> {
+            com.mojang.brigadier.Command<FabricClientCommandSource> openHudCmd = ctx -> {
                 class_310 mc = class_310.method_1551();
                 mc.execute(() -> mc.method_1507((class_437)new HudEditScreen()));
                 return 1;
-            });
+            };
+            root.executes(openHudCmd);
 
             var node = dispatcher.register(root);
-            dispatcher.register(ClientCommandManager.literal("ymh").redirect(node));
-            dispatcher.register(ClientCommandManager.literal("ms").redirect(node));
+            dispatcher.register(ClientCommandManager.literal("ymh").executes(openHudCmd).redirect(node));
+            dispatcher.register(ClientCommandManager.literal("ms").executes(openHudCmd).redirect(node));
 
             LiteralArgumentBuilder syncRoot = ClientCommandManager.literal("musicsync");
             syncRoot.then(ClientCommandManager.literal("gui").executes(ctx -> {
@@ -340,13 +343,14 @@ implements ClientModInitializer {
                 src.sendFeedback((class_2561)class_2561.method_43470("§b✦ ------------------------------------------"));
                 return 1;
             }));
-            syncRoot.executes(ctx -> {
+            com.mojang.brigadier.Command<FabricClientCommandSource> openSyncCmd = ctx -> {
                 class_310 mc = class_310.method_1551();
                 mc.execute(() -> mc.method_1507((class_437)new MusicSyncScreen(mc.field_1755)));
                 return 1;
-            });
+            };
+            syncRoot.executes(openSyncCmd);
             var syncNode = dispatcher.register(syncRoot);
-            dispatcher.register(ClientCommandManager.literal("sync").redirect(syncNode));
+            dispatcher.register(ClientCommandManager.literal("sync").executes(openSyncCmd).redirect(syncNode));
         });
         HudRenderCallback.EVENT.register((drawContext, tickCounter) -> this.hudRenderer.render(drawContext, tickCounter));
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {

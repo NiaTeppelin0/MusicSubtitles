@@ -656,9 +656,9 @@ public class RadialMenuScreen extends class_437 {
         int barW = tagW - 18;
         int barY = tagY + tagH - 7;
         float progress = hasTrack ? class_3532.method_15363((float)trackState.getProgress(), (float)0.0f, (float)1.0f) : 0.0f;
-        int pStart = (int)(alpha * 245.0f) << 24 | (activeItem.color & 0xFFFFFF);
-        int pEnd = (int)(alpha * 245.0f) << 24 | 0x38BDF8;
-        MusicHudRenderer.renderProgressBarWithPlayhead(context, tagX + 10, barY, barW, 2, progress, pStart, pEnd, System.currentTimeMillis());
+        int barAlpha = class_3532.method_15340((int)(alpha * 245.0f), 0, 255);
+        int fillRgb = activeItem.color & 0xFFFFFF;
+        MusicHudRenderer.renderProgressBarWithPlayhead(context, tagX + 10, barY, barW, 2, progress, barAlpha, fillRgb, System.currentTimeMillis());
 
         int chevronSize = 16;
         context.method_51448().pushMatrix();

@@ -68,8 +68,20 @@ public class LocalMusicScreen extends class_437 {
         this.method_37063(btnRefresh);
 
         int bottomY = panelY + panelH - 32;
-        int ctrlBtnW = 28;
-        int startBtnX = panelX + (panelW - (ctrlBtnW * 5 + 16)) / 2;
+        int backW = panelW < 340 ? 48 : 60;
+        int sliderW = class_3532.method_15340(panelW - 260, 64, 104);
+        int ctrlGap = panelW < 340 ? 2 : 4;
+        int ctrlBtnW = panelW < 340 ? 22 : 28;
+        int ctrlTotalW = ctrlBtnW * 5 + ctrlGap * 4;
+        int leftLimit = panelX + 10 + backW + 4;
+        int rightLimit = panelX + panelW - 10 - sliderW - 4;
+        int availCenter = rightLimit - leftLimit;
+        if (availCenter < ctrlTotalW) {
+            ctrlBtnW = Math.max(16, (availCenter - ctrlGap * 4) / 5);
+            ctrlTotalW = ctrlBtnW * 5 + ctrlGap * 4;
+        }
+        int desiredStart = panelX + (panelW - ctrlTotalW) / 2;
+        int startBtnX = class_3532.method_15340(desiredStart, leftLimit, Math.max(leftLimit, rightLimit - ctrlTotalW));
 
         this.btnShuffle = new ModernButtonWidget(startBtnX, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("🔀"), b -> {
             boolean next = !LocalMusicPlayer.getInstance().isShuffle();
@@ -78,41 +90,41 @@ public class LocalMusicScreen extends class_437 {
         });
         this.method_37063(this.btnShuffle);
 
-        ModernButtonWidget btnPrev = new ModernButtonWidget(startBtnX + ctrlBtnW + 4, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("⏮"), b -> {
+        ModernButtonWidget btnPrev = new ModernButtonWidget(startBtnX + ctrlBtnW + ctrlGap, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("⏮"), b -> {
             LocalMusicPlayer.getInstance().previous();
             this.updateControlButtons();
         });
         this.method_37063(btnPrev);
 
-        this.btnPlayPause = new ModernButtonWidget(startBtnX + (ctrlBtnW + 4) * 2, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("▶"), b -> {
+        this.btnPlayPause = new ModernButtonWidget(startBtnX + (ctrlBtnW + ctrlGap) * 2, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("▶"), b -> {
             LocalMusicPlayer.getInstance().togglePlayPause();
             this.updateControlButtons();
         });
         this.btnPlayPause.setPrimary(true);
         this.method_37063(this.btnPlayPause);
 
-        ModernButtonWidget btnNext = new ModernButtonWidget(startBtnX + (ctrlBtnW + 4) * 3, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("⏭"), b -> {
+        ModernButtonWidget btnNext = new ModernButtonWidget(startBtnX + (ctrlBtnW + ctrlGap) * 3, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("⏭"), b -> {
             LocalMusicPlayer.getInstance().next();
             this.updateControlButtons();
         });
         this.method_37063(btnNext);
 
-        this.btnRepeat = new ModernButtonWidget(startBtnX + (ctrlBtnW + 4) * 4, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("🔁"), b -> {
+        this.btnRepeat = new ModernButtonWidget(startBtnX + (ctrlBtnW + ctrlGap) * 4, bottomY, ctrlBtnW, 20, (class_2561)class_2561.method_43470("🔁"), b -> {
             boolean next = !LocalMusicPlayer.getInstance().isRepeat();
             LocalMusicPlayer.getInstance().setRepeat(next);
             this.updateControlButtons();
         });
         this.method_37063(this.btnRepeat);
 
-        int sliderW = 104;
         int sliderX = panelX + panelW - sliderW - 10;
-        this.sliderVolume = new ModernSliderWidget(sliderX, bottomY, sliderW, 20, "🔊 Громкость: ", (double)LocalMusicPlayer.getInstance().getVolume(), val -> String.format("%d%%", (int)Math.round(val * 100.0)), val -> {
+        String volLabel = sliderW < 84 ? "🔊 " : "🔊 Громкость: ";
+        this.sliderVolume = new ModernSliderWidget(sliderX, bottomY, sliderW, 20, volLabel, (double)LocalMusicPlayer.getInstance().getVolume(), val -> String.format("%d%%", (int)Math.round(val * 100.0)), val -> {
             LocalMusicPlayer.getInstance().setVolume(val.floatValue());
         });
         this.sliderVolume.setOnRelease(() -> HudConfig.save());
         this.method_37063(this.sliderVolume);
 
-        ModernButtonWidget btnBack = new ModernButtonWidget(panelX + 10, bottomY, 60, 20, (class_2561)class_2561.method_43470("Назад"), b -> {
+        ModernButtonWidget btnBack = new ModernButtonWidget(panelX + 10, bottomY, backW, 20, (class_2561)class_2561.method_43470("Назад"), b -> {
             this.field_22787.method_1507(this.parent);
         });
         this.method_37063(btnBack);
@@ -159,7 +171,7 @@ public class LocalMusicScreen extends class_437 {
 
         int itemH = 34;
         int panelH = this.field_22790 - 40;
-        int listH = panelH - 128;
+        int listH = panelH - 130;
         int totalContentH = this.filteredTracks.size() * itemH;
         this.maxScroll = Math.max(0, totalContentH - listH);
         this.scrollOffset = class_3532.method_15340(this.scrollOffset, 0, this.maxScroll);
@@ -307,7 +319,7 @@ public class LocalMusicScreen extends class_437 {
         String durTimeStr = (dm < 10L ? "0" : "") + dm + (ds < 10L ? ":0" : ":") + ds;
         context.method_51433(this.field_22793, durTimeStr, panelX + panelW - 44, scrubberY - 2, 0xFF64748B, false);
 
-        MusicHudRenderer.renderProgressBarWithPlayhead(context, scrubberX, scrubberY, scrubberW, scrubberH, progress, 0xFF38BDF8, 0xFF10B981, nowMs);
+        MusicHudRenderer.renderProgressBarWithPlayhead(context, scrubberX, scrubberY, scrubberW, scrubberH, progress, 255, 0x38BDF8, nowMs);
 
         int discCx = panelX + 34;
         int discCy = scrubberY - 11;
@@ -355,9 +367,9 @@ public class LocalMusicScreen extends class_437 {
         }
 
         int listX = panelX + 10;
-        int listY = panelY + 52;
+        int listY = panelY + 54;
         int listW = panelW - 20;
-        int listH = panelH - 128;
+        int listH = panelH - 130;
         int itemH = 34;
 
         if (mouseX >= (double)listX && mouseX <= (double)(listX + listW) && mouseY >= (double)listY && mouseY <= (double)(listY + listH)) {

@@ -55,8 +55,14 @@ public class LyricsRenderer {
     }
 
     public static net.minecraft.class_11719.class_11721 getCachedFontDesc(String fontName) {
-        return FONT_DESC_CACHE.computeIfAbsent(fontName, name -> {
-            class_2960 fontId = name.contains(":") ? class_2960.method_60654(name) : class_2960.method_60655("minecraft", name);
+        String key = (fontName == null || fontName.isEmpty()) ? "default" : fontName;
+        return FONT_DESC_CACHE.computeIfAbsent(key, name -> {
+            class_2960 fontId;
+            try {
+                fontId = name.contains(":") ? class_2960.method_60654(name) : class_2960.method_60655("minecraft", name);
+            } catch (Exception ignored) {
+                fontId = class_2960.method_60655("minecraft", "default");
+            }
             return new net.minecraft.class_11719.class_11721(fontId);
         });
     }

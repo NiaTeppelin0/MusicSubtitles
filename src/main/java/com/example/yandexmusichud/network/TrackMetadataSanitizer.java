@@ -16,7 +16,7 @@ public class TrackMetadataSanitizer {
     private static final Pattern BROWSER_TRAILING_NOISE = Pattern.compile("(?iu)\\s*(?:[\\|•·~\\-–—]\\s*(?:youtube(?:\\s*music)?|soundcloud|spotify|vk|вконтакте|yandex|яндекс(?:\\s*музыка)?|слушать(?:\\s*онлайн)?(?:\\s*на\\s*яндекс\\s*музыке)?|apple\\s*music|deezer|music|video|audio))+\\s*$");
     private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("(?i)\\.(?:mp3|wav|ogg|flac|m4a|aac|wma|opus)$");
     private static final Pattern FEAT_IN_TITLE_PATTERN = Pattern.compile("(?i)[\\(\\[](?:feat\\.?|ft\\.?|featuring|with)\\s+([^\\]\\)]+)[\\)\\]]");
-    private static final Pattern FEAT_BARE_PATTERN = Pattern.compile("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|with)\\s+([^\\(\\)\\[\\]\\-]+)");
+    private static final Pattern FEAT_BARE_PATTERN = Pattern.compile("(?i)\\s+(?:feat\\.?|ft\\.?|featuring)\\s+([^\\(\\)\\[\\]\\-]+)");
     private static final Pattern REMASTER_PATTERN = Pattern.compile("(?i)[\\(\\[](?:\\d{4}\\s*remaster(?:ed)?|remaster(?:ed)?(?:\\s*\\d{4})?|deluxe(?:\\s*edition)?|anniversary(?:\\s*edition)?|special(?:\\s*edition)?|bonus\\s*track|radio\\s*edit|extended\\s*(?:mix|version)|album\\s*version)[\\)\\]]");
     private static final Pattern LIVE_PATTERN = Pattern.compile("(?iu)\\b(?:live|концерт|живой\\s*звук|live\\s*at|live\\s*from|live\\s*in)\\b");
     private static final Pattern REMIX_PATTERN = Pattern.compile("(?iu)\\b(?:remix|rmx|ремикс|club\\s*mix|vip\\s*mix|dub\\s*mix|edit)\\b");
@@ -26,8 +26,8 @@ public class TrackMetadataSanitizer {
     private static final Pattern TOPIC_SUFFIX_PATTERN = Pattern.compile("(?iu)\\s*-\\s*(?:topic|\u0442\u0435\u043c\u0430)$");
     private static final Pattern QUOTES_PATTERN = Pattern.compile("[\"\'«»“”„]");
     private static final Pattern MULTI_SPACE_PATTERN = Pattern.compile("\\s+");
-    private static final Pattern FEATURED_SPLIT_PATTERN = Pattern.compile("[,&/xX]|(?i)\\s+and\\s+");
-    private static final Pattern PRIMARY_ARTIST_SPLIT_PATTERN = Pattern.compile("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|with|&|x|vs\\.?)\\s+|,\\s*");
+    private static final Pattern FEATURED_SPLIT_PATTERN = Pattern.compile("[,&/]|(?i)\\s+(?:and|x)\\s+");
+    private static final Pattern PRIMARY_ARTIST_SPLIT_PATTERN = Pattern.compile("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|&|x|vs\\.?)\\s+|,\\s*");
 
     public record SanitizedMetadata(
         String cleanTitle,

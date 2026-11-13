@@ -9,9 +9,9 @@ import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileAttribute;
-import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.loader.api.FabricLoader;
 
 public class HudConfig {
@@ -106,8 +106,8 @@ public class HudConfig {
     public String musicSourcePreset = "ALL";
     public boolean promptYandexMusicOnStartup = true;
     public String lastSeenChangelogVersion = "";
-    public Map<String, Integer> trackOffsets = new HashMap<String, Integer>();
-    public Map<String, String> trackStyles = new HashMap<String, String>();
+    public Map<String, Integer> trackOffsets = new ConcurrentHashMap<String, Integer>();
+    public Map<String, String> trackStyles = new ConcurrentHashMap<String, String>();
     public transient int hudWidth = 260;
     public transient int hudHeight = 74;
 
@@ -136,6 +136,9 @@ public class HudConfig {
                 if (HudConfig.INSTANCE.hudStyle == null || HudConfig.INSTANCE.hudStyle.isEmpty()) {
                     HudConfig.INSTANCE.hudStyle = "MINIMAL_DARK";
                 }
+                if (HudConfig.INSTANCE.anchor == null || HudConfig.INSTANCE.anchor.isEmpty()) {
+                    HudConfig.INSTANCE.anchor = "TOP_RIGHT";
+                }
                 if (HudConfig.INSTANCE.hudBackgroundColor == 1710638 && HudConfig.INSTANCE.cornerRadius == 0) {
                     HudConfig.INSTANCE.hudBackgroundColor = 0x0A0D14;
                     HudConfig.INSTANCE.hudBackgroundAlpha = 0.88f;
@@ -144,11 +147,23 @@ public class HudConfig {
                 if (HudConfig.INSTANCE.configBackgroundColor == 0x0D0F18) {
                     HudConfig.INSTANCE.configBackgroundColor = 0x0A0D14;
                 }
-                if (HudConfig.INSTANCE.trackOffsets == null) {
-                    HudConfig.INSTANCE.trackOffsets = new HashMap<String, Integer>();
+                Map<String, Integer> loadedOffsets = HudConfig.INSTANCE.trackOffsets;
+                HudConfig.INSTANCE.trackOffsets = new ConcurrentHashMap<String, Integer>();
+                if (loadedOffsets != null) {
+                    for (Map.Entry<String, Integer> entry : loadedOffsets.entrySet()) {
+                        if (entry.getKey() != null && entry.getValue() != null) {
+                            HudConfig.INSTANCE.trackOffsets.put(entry.getKey(), entry.getValue());
+                        }
+                    }
                 }
-                if (HudConfig.INSTANCE.trackStyles == null) {
-                    HudConfig.INSTANCE.trackStyles = new HashMap<String, String>();
+                Map<String, String> loadedStyles = HudConfig.INSTANCE.trackStyles;
+                HudConfig.INSTANCE.trackStyles = new ConcurrentHashMap<String, String>();
+                if (loadedStyles != null) {
+                    for (Map.Entry<String, String> entry : loadedStyles.entrySet()) {
+                        if (entry.getKey() != null && entry.getValue() != null) {
+                            HudConfig.INSTANCE.trackStyles.put(entry.getKey(), entry.getValue());
+                        }
+                    }
                 }
                 if (HudConfig.INSTANCE.yandexMusicToken != null) {
                     HudConfig.INSTANCE.yandexMusicToken = com.example.yandexmusichud.hud.YandexMusicSettingsScreen.sanitizeToken(HudConfig.INSTANCE.yandexMusicToken);
@@ -200,7 +215,7 @@ public class HudConfig {
 
     public void setTrackStyle(String artist, String title, int color, int activeColor, String mode, float scale, String font) {
         if (this.trackStyles == null) {
-            this.trackStyles = new HashMap<String, String>();
+            this.trackStyles = new ConcurrentHashMap<String, String>();
         }
         if (artist == null || title == null) {
             return;
@@ -300,12 +315,13 @@ public class HudConfig {
             return 0;
         }
         String key = HudConfig.buildTrackKey(artist, title);
-        return this.trackOffsets.getOrDefault(key, 0);
+        Integer offset = this.trackOffsets.get(key);
+        return offset != null ? offset : 0;
     }
 
     public void setTrackSyncOffset(String artist, String title, int offsetMs) {
         if (this.trackOffsets == null) {
-            this.trackOffsets = new HashMap<String, Integer>();
+            this.trackOffsets = new ConcurrentHashMap<String, Integer>();
         }
         if (artist == null || title == null) {
             return;
@@ -321,7 +337,8 @@ public class HudConfig {
 
 
     public int getAbsoluteX(int screenWidth, int widgetWidth) {
-        return switch (this.anchor) {
+        String safeAnchor = this.anchor != null ? this.anchor : "CUSTOM";
+        return switch (safeAnchor) {
             case "TOP_RIGHT", "BOTTOM_RIGHT" -> (int)((double)screenWidth * this.hudPositionX) - widgetWidth;
             case "TOP_LEFT", "BOTTOM_LEFT" -> (int)((double)screenWidth * this.hudPositionX);
             default -> (int)((double)screenWidth * this.hudPositionX) - widgetWidth / 2;
@@ -329,7 +346,8 @@ public class HudConfig {
     }
 
     public int getAbsoluteY(int screenHeight, int widgetHeight) {
-        return switch (this.anchor) {
+        String safeAnchor = this.anchor != null ? this.anchor : "CUSTOM";
+        return switch (safeAnchor) {
             case "BOTTOM_LEFT", "BOTTOM_RIGHT" -> (int)((double)screenHeight * this.hudPositionY) - widgetHeight;
             case "TOP_LEFT", "TOP_RIGHT" -> (int)((double)screenHeight * this.hudPositionY);
             default -> (int)((double)screenHeight * this.hudPositionY) - widgetHeight / 2;

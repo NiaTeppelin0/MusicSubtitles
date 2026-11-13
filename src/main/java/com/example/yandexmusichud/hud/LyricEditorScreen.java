@@ -821,10 +821,20 @@ public class LyricEditorScreen extends class_437 {
         if (this.lines.isEmpty()) {
             return;
         }
-        if (this.editField != null && this.selectedIndex >= 0 && this.selectedIndex < this.lines.size()) {
-            this.lines.get(this.selectedIndex).text = this.editField.method_1882();
+        EditableLine selectedRef = null;
+        if (this.selectedIndex >= 0 && this.selectedIndex < this.lines.size()) {
+            selectedRef = this.lines.get(this.selectedIndex);
+            if (this.editField != null) {
+                selectedRef.text = this.editField.method_1882();
+            }
         }
         Collections.sort(this.lines, Comparator.comparingLong(a -> a.startMs));
+        if (selectedRef != null) {
+            int newIdx = this.lines.indexOf(selectedRef);
+            if (newIdx >= 0) {
+                this.selectedIndex = newIdx;
+            }
+        }
 
         LyricsManager lm = YandexMusicHudMod.INSTANCE != null ? YandexMusicHudMod.INSTANCE.getLyricsManager() : null;
         if (lm != null) {
@@ -1320,17 +1330,32 @@ public class LyricEditorScreen extends class_437 {
                     int charCol = rawCol != -1 ? (rawCol & 0xFFFFFF) : textColor;
                     int finalCol = 0xFF000000 | charCol;
 
-                    if (CustomFontManager.isCustomFont(charFont)) {
+                    boolean isCustom = CustomFontManager.isCustomFont(charFont);
+                    boolean isDefaultFont = !isCustom && (charFont == null || charFont.isEmpty() || "default".equalsIgnoreCase(charFont) || "minecraft:default".equalsIgnoreCase(charFont) || "minecraft".equalsIgnoreCase(charFont));
+                    boolean isRuneFont = !isCustom && charFont != null && (charFont.contains("alt") || charFont.contains("illager"));
+                    if (isCustom) {
                         CustomFontManager.CustomGlyph glyph = CustomFontManager.getGlyph(charFont, c);
                         int charW = glyph != null ? Math.max(1, Math.round(glyph.advance)) : 6;
                         if (drawX + charW > px + pw - 60) break;
                         CustomFontManager.drawGlyph2D(context, glyph, drawX, textY, finalCol);
                         drawX += charW;
-                    } else {
-                        String s = String.valueOf(c);
+                    } else if (isDefaultFont) {
+                        String s = com.example.yandexmusichud.lyrics.LyricsRenderer.singleCharString(c);
                         int charW = tr.method_1727(s);
                         if (drawX + charW > px + pw - 60) break;
                         context.method_51433(tr, s, drawX, textY, finalCol, true);
+                        drawX += charW;
+                    } else {
+                        String renderStr = isRuneFont
+                            ? com.example.yandexmusichud.lyrics.LyricsRenderer.transliterateForRune(c)
+                            : com.example.yandexmusichud.lyrics.LyricsRenderer.singleCharString(c);
+                        if (renderStr.isEmpty()) {
+                            renderStr = " ";
+                        }
+                        net.minecraft.class_5250 charComp = com.example.yandexmusichud.lyrics.LyricsRenderer.getCachedStyledChar(charFont.trim(), renderStr);
+                        int charW = tr.method_27525(charComp);
+                        if (drawX + charW > px + pw - 60) break;
+                        context.method_51439(tr, charComp, drawX, textY, finalCol, true);
                         drawX += charW;
                     }
                 }

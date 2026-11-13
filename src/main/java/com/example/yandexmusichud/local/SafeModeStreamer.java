@@ -80,7 +80,7 @@ public class SafeModeStreamer {
         if (Files.exists(cachedFile)) {
             try {
                 long sz = Files.size(cachedFile);
-                if (sz <= 600000L) {
+                if (sz <= 16384L) {
                     Files.deleteIfExists(cachedFile);
                     Files.deleteIfExists(coverFile);
                 } else {
@@ -88,8 +88,9 @@ public class SafeModeStreamer {
                     if (Files.exists(coverFile)) {
                         coverBytes = Files.readAllBytes(coverFile);
                     }
+                    this.inFlightQuery = "";
                     LocalMusicTrack track = new LocalMusicTrack(cachedFile, cachedFile.getFileName().toString(), title, artist, "Сеть", state.durationMs(), "MP3", null, coverBytes);
-                    LocalMusicPlayer.getInstance().playTrack(track, state.positionMs());
+                    LocalMusicPlayer.getInstance().playTrack(track, state.getInterpolatedPositionMs());
                     if (!state.isPlaying()) {
                         LocalMusicPlayer.getInstance().pause();
                     }
@@ -134,9 +135,18 @@ public class SafeModeStreamer {
                             coverBytes = Files.readAllBytes(coverFile);
                         } catch (Throwable ignored) {}
                     }
-                    LocalMusicTrack track = new LocalMusicTrack(cachedFile, cachedFile.getFileName().toString(), title, artist, "Сеть", state.durationMs(), "MP3", null, coverBytes);
-                    LocalMusicPlayer.getInstance().playTrack(track, state.positionMs());
-                    if (!state.isPlaying()) {
+                    TrackState effectiveState = state;
+                    TrackState latestSynced = com.example.yandexmusichud.hud.PlayerBadgeManager.INSTANCE.getSyncedTrack();
+                    if (latestSynced != null && latestSynced.isActive()) {
+                        String latestKey = (latestSynced.artist().trim() + " - " + latestSynced.title().trim()).toLowerCase(Locale.ROOT);
+                        if (queryKey.equals(latestKey)) {
+                            effectiveState = latestSynced;
+                        }
+                    }
+                    long startPosMs = effectiveState.getInterpolatedPositionMs();
+                    LocalMusicTrack track = new LocalMusicTrack(cachedFile, cachedFile.getFileName().toString(), title, artist, "Сеть", effectiveState.durationMs(), "MP3", null, coverBytes);
+                    LocalMusicPlayer.getInstance().playTrack(track, startPosMs);
+                    if (!effectiveState.isPlaying()) {
                         LocalMusicPlayer.getInstance().pause();
                     }
                     if (coverBytes != null && coverBytes.length > 0) {
@@ -220,21 +230,26 @@ public class SafeModeStreamer {
 
             String xmlUrl = null;
             try {
-                JsonObject json = JsonParser.parseString(respDl.body()).getAsJsonObject();
-                if (json.has("result") && json.get("result").isJsonArray()) {
-                    JsonArray results = json.getAsJsonArray("result");
-                    for (int i = 0; i < results.size(); i++) {
-                        JsonObject item = results.get(i).getAsJsonObject();
-                        boolean isPreview = item.has("preview") && item.get("preview").getAsBoolean();
-                        if (!isPreview && item.has("downloadInfoUrl")) {
-                            xmlUrl = item.get("downloadInfoUrl").getAsString();
-                            break;
+                com.google.gson.JsonElement rootEl = JsonParser.parseString(respDl.body());
+                if (rootEl != null && rootEl.isJsonObject()) {
+                    JsonObject json = rootEl.getAsJsonObject();
+                    if (json.has("result") && json.get("result").isJsonArray()) {
+                        JsonArray results = json.getAsJsonArray("result");
+                        for (int i = 0; i < results.size(); i++) {
+                            com.google.gson.JsonElement itemEl = results.get(i);
+                            if (itemEl == null || !itemEl.isJsonObject()) continue;
+                            JsonObject item = itemEl.getAsJsonObject();
+                            boolean isPreview = item.has("preview") && item.get("preview").isJsonPrimitive() && item.get("preview").getAsBoolean();
+                            if (!isPreview && item.has("downloadInfoUrl") && item.get("downloadInfoUrl").isJsonPrimitive()) {
+                                xmlUrl = item.get("downloadInfoUrl").getAsString();
+                                break;
+                            }
                         }
-                    }
-                    if (xmlUrl == null && !results.isEmpty()) {
-                        JsonObject first = results.get(0).getAsJsonObject();
-                        if (first.has("downloadInfoUrl")) {
-                            xmlUrl = first.get("downloadInfoUrl").getAsString();
+                        if (xmlUrl == null && !results.isEmpty() && results.get(0).isJsonObject()) {
+                            JsonObject first = results.get(0).getAsJsonObject();
+                            if (first.has("downloadInfoUrl") && first.get("downloadInfoUrl").isJsonPrimitive()) {
+                                xmlUrl = first.get("downloadInfoUrl").getAsString();
+                            }
                         }
                     }
                 }
@@ -362,32 +377,38 @@ public class SafeModeStreamer {
                 return false;
             }
 
-            JsonObject obj = JsonParser.parseString(resp.body()).getAsJsonObject();
-            if (!obj.has("data")) {
+            com.google.gson.JsonElement rootEl = JsonParser.parseString(resp.body());
+            if (rootEl == null || !rootEl.isJsonObject()) {
+                return false;
+            }
+            JsonObject obj = rootEl.getAsJsonObject();
+            if (!obj.has("data") || !obj.get("data").isJsonArray()) {
                 return false;
             }
             JsonArray arr = obj.getAsJsonArray("data");
-            if (arr.isEmpty()) {
+            if (arr.isEmpty() || !arr.get(0).isJsonObject()) {
                 return false;
             }
 
             JsonObject first = arr.get(0).getAsJsonObject();
-            if (first.has("album")) {
+            if (first.has("album") && first.get("album").isJsonObject()) {
                 JsonObject alb = first.getAsJsonObject("album");
-                if (alb.has("cover_medium")) {
+                if (alb.has("cover_medium") && alb.get("cover_medium").isJsonPrimitive()) {
                     try {
                         String cUrl = alb.get("cover_medium").getAsString();
-                        HttpRequest cReq = HttpRequest.newBuilder().uri(URI.create(cUrl)).timeout(Duration.ofSeconds(5)).GET().build();
-                        HttpResponse<byte[]> cResp = HTTP_CLIENT.send(cReq, HttpResponse.BodyHandlers.ofByteArray());
-                        if (cResp.statusCode() == 200 && cResp.body() != null && cResp.body().length > 0) {
-                            Files.write(coverFile, cResp.body());
-                            this.applyCover(cResp.body());
+                        if (cUrl != null && !cUrl.isEmpty()) {
+                            HttpRequest cReq = HttpRequest.newBuilder().uri(URI.create(cUrl)).timeout(Duration.ofSeconds(5)).GET().build();
+                            HttpResponse<byte[]> cResp = HTTP_CLIENT.send(cReq, HttpResponse.BodyHandlers.ofByteArray());
+                            if (cResp.statusCode() == 200 && cResp.body() != null && cResp.body().length > 0) {
+                                Files.write(coverFile, cResp.body());
+                                this.applyCover(cResp.body());
+                            }
                         }
                     } catch (Throwable ignored) {}
                 }
             }
 
-            if (!first.has("preview")) {
+            if (!first.has("preview") || !first.get("preview").isJsonPrimitive()) {
                 return false;
             }
             String previewUrl = first.get("preview").getAsString();
@@ -433,7 +454,7 @@ public class SafeModeStreamer {
                         }
                     }
                 }
-                if (Files.exists(partFile) && Files.size(partFile) > 600000L) {
+                if (Files.exists(partFile) && Files.size(partFile) > 16384L) {
                     Files.move(partFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
                     moved = true;
                     return true;

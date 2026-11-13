@@ -60,12 +60,16 @@ public class GeniusLyricsProvider {
             if (response.statusCode() != 200 || response.body() == null || response.body().isBlank()) {
                 return null;
             }
-            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
-            if (!root.has("response") || root.get("response").isJsonNull()) {
+            JsonElement rootEl = JsonParser.parseString(response.body());
+            if (rootEl == null || !rootEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject root = rootEl.getAsJsonObject();
+            if (!root.has("response") || !root.get("response").isJsonObject()) {
                 return null;
             }
             JsonObject respObj = root.getAsJsonObject("response");
-            if (!respObj.has("sections") || respObj.get("sections").isJsonNull()) {
+            if (!respObj.has("sections") || !respObj.get("sections").isJsonArray()) {
                 return null;
             }
             JsonArray sections = respObj.getAsJsonArray("sections");
@@ -73,19 +77,23 @@ public class GeniusLyricsProvider {
             double bestScore = -1.0;
             for (JsonElement secEl : sections) {
                 JsonObject sec;
-                if (!secEl.isJsonObject() || !(sec = secEl.getAsJsonObject()).has("type") || !"song".equalsIgnoreCase(sec.get("type").getAsString()) || !sec.has("hits") || sec.get("hits").isJsonNull()) continue;
+                if (!secEl.isJsonObject()) continue;
+                sec = secEl.getAsJsonObject();
+                if (!sec.has("type") || !sec.get("type").isJsonPrimitive() || !"song".equalsIgnoreCase(sec.get("type").getAsString()) || !sec.has("hits") || !sec.get("hits").isJsonArray()) continue;
                 JsonArray hits = sec.getAsJsonArray("hits");
                 for (JsonElement hitEl : hits) {
                     JsonObject hit;
-                    if (!hitEl.isJsonObject() || !(hit = hitEl.getAsJsonObject()).has("result") || hit.get("result").isJsonNull()) continue;
+                    if (!hitEl.isJsonObject()) continue;
+                    hit = hitEl.getAsJsonObject();
+                    if (!hit.has("result") || !hit.get("result").isJsonObject()) continue;
                     JsonObject res = hit.getAsJsonObject("result");
-                    String resTitle = res.has("title") && !res.get("title").isJsonNull() ? res.get("title").getAsString() : "";
+                    String resTitle = res.has("title") && res.get("title").isJsonPrimitive() ? res.get("title").getAsString() : "";
                     String resArtist = "";
-                    if (res.has("primary_artist") && !res.get("primary_artist").isJsonNull()) {
+                    if (res.has("primary_artist") && res.get("primary_artist").isJsonObject()) {
                         JsonObject pa = res.getAsJsonObject("primary_artist");
-                        resArtist = pa.has("name") && !pa.get("name").isJsonNull() ? pa.get("name").getAsString() : "";
+                        resArtist = pa.has("name") && pa.get("name").isJsonPrimitive() ? pa.get("name").getAsString() : "";
                     }
-                    String url = res.has("url") && !res.get("url").isJsonNull() ? res.get("url").getAsString() : "";
+                    String url = res.has("url") && res.get("url").isJsonPrimitive() ? res.get("url").getAsString() : "";
                     if (url.isBlank()) continue;
                     double tSim = GeniusLyricsProvider.computeStringSimilarity(title, resTitle);
                     double aSim = artist != null && !artist.isBlank() ? GeniusLyricsProvider.computeStringSimilarity(artist, resArtist) : 1.0;
@@ -189,7 +197,7 @@ public class GeniusLyricsProvider {
             int contentEnd = -1;
             while (tagMatcher.find(cursor)) {
                 String tok = tagMatcher.group();
-                if (tok.startsWith("</") || tok.startsWith("</")) {
+                if (tok.startsWith("</")) {
                     --depth;
                     if (depth == 0) {
                         contentEnd = tagMatcher.start();

@@ -109,7 +109,6 @@ public class CustomBackgroundManager {
             return;
         }
         for (File f : files) {
-            boolean isKnownImage;
             if (f.isDirectory()) continue;
             String name = f.getName();
             String lower = name.toLowerCase(Locale.ROOT);
@@ -123,12 +122,16 @@ public class CustomBackgroundManager {
 
             }
             String detected = readBytes >= 2 ? CustomBackgroundManager.detectFileFormat(header) : "EMPTY";
-            boolean bl = isKnownImage = "PNG".equals(detected) || "JPEG".equals(detected) || "BMP".equals(detected) || "WEBP".equals(detected) || "GIF".equals(detected) || lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".jfif") || lower.endsWith(".bmp") || lower.endsWith(".webp");
+            if ("WEBP".equals(detected) || lower.endsWith(".webp")) {
+                this.invalidFiles.add(new InvalidFileEntry(name, "\u0424\u043e\u0440\u043c\u0430\u0442 WebP \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044f. \u041f\u0435\u0440\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u0435 \u043a\u0430\u043a .PNG \u0438\u043b\u0438 .JPG.", false));
+                continue;
+            }
+            boolean isKnownImage = "PNG".equals(detected) || "JPEG".equals(detected) || "BMP".equals(detected) || "GIF".equals(detected) || lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".jfif") || lower.endsWith(".bmp");
             if (isKnownImage && readBytes > 0) {
                 this.validBackgrounds.add(name);
                 continue;
             }
-            if (readBytes == 0) {
+            if (readBytes <= 0) {
                 this.invalidFiles.add(new InvalidFileEntry(name, "\u0424\u0430\u0439\u043b \u043f\u0443\u0441\u0442 (0 \u0431\u0430\u0439\u0442).", false));
                 continue;
             }
@@ -143,31 +146,31 @@ public class CustomBackgroundManager {
     public void checkBackgroundsThrottled() {
     }
 
-    public boolean hasInvalidFiles() {
+    public synchronized boolean hasInvalidFiles() {
         return !this.invalidFiles.isEmpty();
     }
 
-    public boolean isAlertActive() {
+    public synchronized boolean isAlertActive() {
         return !this.invalidFiles.isEmpty() && !this.alertDismissed;
     }
 
-    public void dismissAlert() {
+    public synchronized void dismissAlert() {
         this.alertDismissed = true;
     }
 
-    public void resetAlertDismissal() {
+    public synchronized void resetAlertDismissal() {
         this.alertDismissed = false;
     }
 
-    public List<InvalidFileEntry> getInvalidFiles() {
+    public synchronized List<InvalidFileEntry> getInvalidFiles() {
         return new ArrayList<InvalidFileEntry>(this.invalidFiles);
     }
 
-    public InvalidFileEntry getFirstInvalidFile() {
+    public synchronized InvalidFileEntry getFirstInvalidFile() {
         return this.invalidFiles.isEmpty() ? null : this.invalidFiles.get(0);
     }
 
-    public List<String> getAvailableBackgrounds() {
+    public synchronized List<String> getAvailableBackgrounds() {
         this.scanBackgrounds();
         return new ArrayList<String>(this.validBackgrounds);
     }
@@ -200,9 +203,8 @@ public class CustomBackgroundManager {
         if (p == null || !Files.exists(p, new LinkOption[0])) {
             return false;
         }
+        Path backup = null;
         try {
-            String targetName;
-            Path targetPath;
             BufferedImage bimg = ImageIO.read(p.toFile());
             if (bimg == null) {
                 return false;
@@ -211,13 +213,35 @@ public class CustomBackgroundManager {
             if (baseName.contains(".")) {
                 baseName = baseName.substring(0, baseName.lastIndexOf(46));
             }
-            if ((targetPath = BACKGROUNDS_DIR.resolve(targetName = baseName + ".png")).equals(p)) {
-                Path backup = BACKGROUNDS_DIR.resolve(baseName + "_old_temp.dat");
-                Files.move(p, backup, new CopyOption[0]);
-                ImageIO.write((RenderedImage)bimg, "PNG", targetPath.toFile());
+            String targetName = baseName + ".png";
+            Path targetPath = CustomBackgroundManager.resolveSafeBackgroundPath(targetName);
+            if (targetPath == null) {
+                return false;
+            }
+            if (targetPath.equals(p)) {
+                backup = CustomBackgroundManager.resolveSafeBackgroundPath(baseName + "_old_temp.dat");
+                if (backup == null) {
+                    return false;
+                }
+                Files.move(p, backup, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                boolean ok = ImageIO.write((RenderedImage)bimg, "PNG", targetPath.toFile());
+                if (!ok || !Files.exists(targetPath, new LinkOption[0]) || Files.size(targetPath) == 0L) {
+                    Files.move(backup, p, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    return false;
+                }
                 Files.deleteIfExists(backup);
+                backup = null;
             } else {
-                ImageIO.write((RenderedImage)bimg, "PNG", targetPath.toFile());
+                Path tmpTarget = CustomBackgroundManager.resolveSafeBackgroundPath(baseName + "_conv_temp.png");
+                if (tmpTarget == null) {
+                    return false;
+                }
+                boolean ok = ImageIO.write((RenderedImage)bimg, "PNG", tmpTarget.toFile());
+                if (!ok || !Files.exists(tmpTarget, new LinkOption[0]) || Files.size(tmpTarget) == 0L) {
+                    Files.deleteIfExists(tmpTarget);
+                    return false;
+                }
+                Files.move(tmpTarget, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 Files.deleteIfExists(p);
             }
             this.scanBackgrounds();
@@ -227,6 +251,12 @@ public class CustomBackgroundManager {
             return true;
         }
         catch (Exception e) {
+            if (backup != null && Files.exists(backup, new LinkOption[0])) {
+                try {
+                    Files.move(backup, p, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (Exception ignored) {
+                }
+            }
             return false;
         }
     }
@@ -388,9 +418,12 @@ public class CustomBackgroundManager {
     }
 
     public void unload() {
-        this.loadGeneration.incrementAndGet();
+        int unloadGen = this.loadGeneration.incrementAndGet();
         this.loadingRequestKey = "";
         Runnable unbindAction = () -> {
+            if (unloadGen != this.loadGeneration.get()) {
+                return;
+            }
             if (this.currentTextureId != null) {
                 class_310.method_1551().method_1531().method_4615(DYNAMIC_BG_ID);
                 this.currentTextureId = null;

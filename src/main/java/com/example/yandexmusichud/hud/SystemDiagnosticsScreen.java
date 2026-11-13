@@ -549,6 +549,10 @@ extends class_437 {
                         }
                         this.runDetailedDiagnostics();
                     };
+                } else if (helperOk) {
+                    helperItem.status = Status.OK;
+                    helperItem.message = "Служба активна (порт " + port + ", пинг " + npPing + "мс). IPC стабилен.";
+                    helperItem.solution = "";
                 } else if (isMac) {
                     helperItem.status = Status.WARNING;
                     helperItem.message = "Служба macOS ожидает запуска плеера.";
@@ -560,10 +564,6 @@ extends class_437 {
                         }
                         this.runDetailedDiagnostics();
                     };
-                } else if (helperOk) {
-                    helperItem.status = Status.OK;
-                    helperItem.message = "Служба активна (порт " + port + ", пинг " + npPing + "мс). IPC стабилен.";
-                    helperItem.solution = "";
                 } else if (isWindows && exeExists) {
                     helperItem.status = Status.ERROR;
                     helperItem.message = "Файл службы найден, но фоновый процесс не отвечает на запросы.";
@@ -756,6 +756,7 @@ extends class_437 {
                 }
                 this.lastReport = this.buildDiagnosticReport();
                 try {
+                    Files.createDirectories(configDir);
                     Path reportPath = configDir.resolve("diagnostic_report.txt");
                     Files.writeString(reportPath, this.lastReport);
                     class_310 mc = class_310.method_1551();

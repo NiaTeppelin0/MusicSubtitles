@@ -72,8 +72,31 @@ public class FontSelectorScreen extends class_437 {
         int screenH = this.field_22790;
 
         int headerY = 28;
-        int searchW = Math.min(130, screenW / 4);
+        int tabH = 16;
+        boolean compact = screenW < 600;
+        int rightBtnW = compact ? 46 : 54;
+        int folderBtnW = compact ? 52 : 68;
+        int reloadX = screenW - 14 - rightBtnW;
+        int folderX = reloadX - 4 - folderBtnW;
+        int wAll = compact ? 26 : 40;
+        int wRu = compact ? 28 : 58;
+        int wFile = compact ? 34 : 68;
+        int wSys = compact ? 30 : 62;
+        int wMc = compact ? 28 : 52;
+        int tabsTotalW = wAll + wRu + wFile + wSys + wMc + 12;
         int searchX = 14;
+        int availForSearchAndTabs = Math.max(120, folderX - 6 - searchX);
+        int searchW = Math.min(130, Math.max(48, Math.min(screenW / 4, availForSearchAndTabs - tabsTotalW - 6)));
+        int tabX = searchX + searchW + 6;
+        int availTabsW = Math.max(80, folderX - 6 - tabX);
+        if (tabsTotalW > availTabsW) {
+            float s = (float)(availTabsW - 12) / (float)(wAll + wRu + wFile + wSys + wMc);
+            wAll = Math.max(18, (int)(wAll * s));
+            wRu = Math.max(18, (int)(wRu * s));
+            wFile = Math.max(20, (int)(wFile * s));
+            wSys = Math.max(20, (int)(wSys * s));
+            wMc = Math.max(18, availTabsW - 12 - (wAll + wRu + wFile + wSys));
+        }
 
         this.searchField = new class_342(this.field_22793, searchX, headerY, searchW, 16, (class_2561)class_2561.method_43470("Поиск"));
         this.searchField.method_1880(50);
@@ -86,14 +109,6 @@ public class FontSelectorScreen extends class_437 {
         });
         this.method_37063(this.searchField);
 
-        int tabX = searchX + searchW + 6;
-        int tabH = 16;
-        boolean compact = screenW < 600;
-        int wAll = compact ? 28 : 40;
-        int wRu = compact ? 32 : 58;
-        int wFile = compact ? 38 : 68;
-        int wSys = compact ? 34 : 62;
-        int wMc = compact ? 32 : 52;
         int curX = tabX;
 
         this.tabAll = new ModernButtonWidget(curX, headerY, wAll, tabH, (class_2561)class_2561.method_43470("Все"), b -> {
@@ -145,8 +160,7 @@ public class FontSelectorScreen extends class_437 {
         });
         this.method_37063(this.tabMc);
 
-        int rightBtnW = 54;
-        ModernButtonWidget bFolder = new ModernButtonWidget(screenW - 14 - rightBtnW * 2 - 20, headerY, rightBtnW + 14, tabH, (class_2561)class_2561.method_43470("📂 Папка"), b -> {
+        ModernButtonWidget bFolder = new ModernButtonWidget(folderX, headerY, folderBtnW, tabH, (class_2561)class_2561.method_43470(compact ? "📂" : "📂 Папка"), b -> {
             CustomFontManager.openFontsFolder();
             this.toastMessage = "Папка открыта: config/yandexmusichud/fonts";
             this.toastTime = System.currentTimeMillis();
@@ -154,7 +168,7 @@ public class FontSelectorScreen extends class_437 {
         });
         this.method_37063(bFolder);
 
-        ModernButtonWidget bReload = new ModernButtonWidget(screenW - 14 - rightBtnW, headerY, rightBtnW, tabH, (class_2561)class_2561.method_43470("🔄 Обнов."), b -> {
+        ModernButtonWidget bReload = new ModernButtonWidget(reloadX, headerY, rightBtnW, tabH, (class_2561)class_2561.method_43470(compact ? "🔄" : "🔄 Обнов."), b -> {
             CustomFontManager.reload();
             this.updateFilteredList();
             this.toastMessage = "Список шрифтов обновлён!";
@@ -327,15 +341,18 @@ public class FontSelectorScreen extends class_437 {
             int nameCol = isSelected ? 0xFF00E5FF : (isHovered ? 0xFFFFFFFF : 0xFFE0E6F0);
             context.method_51433(tr, nameText, textX, itemY + 6, nameCol, true);
 
-            int nameW = tr.method_1727(nameText);
-            String idStr = info.id;
-            if (cardW > 390) {
-                context.method_51433(tr, idStr, textX + nameW + 8, itemY + 7, 0xFF6C7C94, false);
-            }
-
             int btnW = 54;
             int btnH = 18;
             int btnX = cardX + cardW - btnW - 6;
+
+            int nameW = tr.method_1727(nameText);
+            String idStr = info.id;
+            int idX = textX + nameW + 8;
+            int availIdW = btnX - idX - 6;
+            if (availIdW >= 24 && idStr != null && !idStr.isEmpty()) {
+                String trimmedId = tr.method_1727(idStr) > availIdW ? tr.method_27523(idStr, availIdW - 6) + "..." : idStr;
+                context.method_51433(tr, trimmedId, idX, itemY + 7, 0xFF6C7C94, false);
+            }
             int btnY = itemY + 10;
             if (isSelected) {
                 MusicHudRenderer.renderRoundedRect(context, btnX, btnY, btnW, btnH, 3, 0xEE00838F);
@@ -487,7 +504,8 @@ public class FontSelectorScreen extends class_437 {
             int cardH = 42;
             float maxScroll = Math.max(0.0f, (float)(this.filteredFonts.size() * cardH - viewportH));
             if (maxScroll > 0.0f) {
-                float scrollDelta = (float)deltaY * (maxScroll / (float)viewportH);
+                int thumbH = Math.max(16, (int)((float)viewportH * ((float)viewportH / (float)(this.filteredFonts.size() * cardH))));
+                float scrollDelta = (float)deltaY * (maxScroll / (float)Math.max(1, viewportH - thumbH));
                 this.targetScroll = Math.max(0.0f, Math.min(this.targetScroll + scrollDelta, maxScroll));
                 this.scrollOffset = this.targetScroll;
             }

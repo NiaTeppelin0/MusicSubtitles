@@ -48,6 +48,7 @@ import org.joml.Matrix4fc;
 public class PlayerBadgeManager {
     public static final PlayerBadgeManager INSTANCE = new PlayerBadgeManager();
     public static final class_2960 MOD_ICON = class_2960.method_60655("yandexmusichud", "textures/gui/mod_icon.png");
+    private static final java.util.regex.Pattern SECTION_CODE_PATTERN = java.util.regex.Pattern.compile("§.");
     private static final Set<UUID> MOD_USERS = Collections.synchronizedSet(new HashSet<UUID>());
     private static final HttpClient RELAY_HTTP_CLIENT = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build();
     private static volatile List<String> cachedModUserNames = Collections.emptyList();
@@ -60,6 +61,8 @@ public class PlayerBadgeManager {
     private long lastPingSentTime = 0L;
     private volatile int relayPingMs = 0;
     private volatile WebSocket relayWs = null;
+    private volatile boolean handshakeSentForConnection = false;
+    private volatile String lastSentHandshakeAddress = "";
     private volatile String lastServerAddress = "";
     private volatile String currentRoom = null;
     private volatile boolean isHost = false;
@@ -70,10 +73,14 @@ public class PlayerBadgeManager {
     private volatile String pendingJoinCode = null;
     private volatile String pendingJoinPassword = null;
     private volatile TrackState syncedTrack = null;
+    private final java.util.concurrent.atomic.AtomicLong roomSessionGen = new java.util.concurrent.atomic.AtomicLong(0L);
     private long lastTrackUpdateSent = 0L;
-    private String lastResolvedTrackKey = "";
-    private String cachedResolvedDirectUrl = "";
-    private String cachedResolvedCoverUrl = "";
+    private volatile String lastResolvedTrackKey = "";
+    private volatile String resolvingTrackKey = "";
+    private volatile String lastFailedResolveTrackKey = "";
+    private volatile long lastFailedResolveTime = 0L;
+    private volatile String cachedResolvedDirectUrl = "";
+    private volatile String cachedResolvedCoverUrl = "";
     private volatile boolean isResolvingDirectUrl = false;
 
     public static record RoomMember(String name, String uuid, boolean isHost, int pingMs) {}
@@ -251,11 +258,14 @@ public class PlayerBadgeManager {
         if (MOD_USERS.isEmpty() && !isSingle && !HudConfig.INSTANCE.showOwnNametagBadge) {
             return false;
         }
-        String s = text.getString();
+        String s = SECTION_CODE_PATTERN.matcher(text.getString()).replaceAll("");
         if (mc.field_1724 != null && (isSingle || HudConfig.INSTANCE.showOwnNametagBadge)) {
             class_2561 myText = mc.field_1724.method_5477();
-            if (myText != null && s.contains(myText.getString())) {
-                return true;
+            if (myText != null) {
+                String myName = SECTION_CODE_PATTERN.matcher(myText.getString()).replaceAll("");
+                if (containsPlayerNameToken(s, myName)) {
+                    return true;
+                }
             }
         }
         if (MOD_USERS.isEmpty()) {
@@ -263,11 +273,33 @@ public class PlayerBadgeManager {
         }
         refreshModUserNames(mc, System.currentTimeMillis());
         for (String name : cachedModUserNames) {
-            if (s.contains(name)) {
+            String cleanName = SECTION_CODE_PATTERN.matcher(name).replaceAll("");
+            if (containsPlayerNameToken(s, cleanName)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean containsPlayerNameToken(String cleanText, String name) {
+        if (cleanText == null || cleanText.isEmpty() || name == null || name.isEmpty()) {
+            return false;
+        }
+        int idx = 0;
+        while ((idx = cleanText.indexOf(name, idx)) >= 0) {
+            boolean leftOk = idx == 0 || !isNameIdentChar(cleanText.charAt(idx - 1));
+            int end = idx + name.length();
+            boolean rightOk = end >= cleanText.length() || !isNameIdentChar(cleanText.charAt(end));
+            if (leftOk && rightOk) {
+                return true;
+            }
+            idx = idx + 1;
+        }
+        return false;
+    }
+
+    private static boolean isNameIdentChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
     }
 
     public static int tabBadgeExtraWidth(class_327 renderer) {
@@ -328,32 +360,48 @@ public class PlayerBadgeManager {
 
     private void checkRelayConnection(class_310 mc, long now) {
         if (!HudConfig.INSTANCE.relayServerEnabled) {
+            if (this.relayWs != null || this.isConnectingRelay) {
+                this.shutdown();
+            }
             return;
         }
         String currentAddress = "singleplayer";
         if (mc.method_1558() != null && mc.method_1558().field_3761 != null) {
             currentAddress = mc.method_1558().field_3761;
         }
-        if (!currentAddress.equalsIgnoreCase(this.lastServerAddress)) {
-            this.lastServerAddress = currentAddress;
-            if (this.relayWs != null) {
-                this.sendHandshake(mc);
-            }
+        this.lastServerAddress = currentAddress;
+        WebSocket ws = this.relayWs;
+        if (ws != null && mc.field_1724 != null && (!this.handshakeSentForConnection || !currentAddress.equalsIgnoreCase(this.lastSentHandshakeAddress))) {
+            this.sendHandshake(mc);
         }
         if (this.relayWs == null && !this.isConnectingRelay) {
             if (now - this.lastRelayAttempt > 10000L) {
                 this.lastRelayAttempt = now;
                 this.tryConnectRelay();
             }
-        } else if (this.relayWs != null) {
+        } else if (ws != null) {
             if (now - this.lastPingTime > 15000L) {
                 this.lastPingTime = now;
                 this.lastPingSentTime = now;
                 try {
-                    this.relayWs.sendText("{\"event\":\"ping\"}", true);
+                    ws.sendText("{\"event\":\"ping\"}", true);
                 } catch (Throwable ignored) {
-                    this.relayWs = null;
+                    this.clearRelayWsIfMatch(ws);
                 }
+            }
+        }
+    }
+
+    private synchronized void clearRelayWsIfMatch(WebSocket ws) {
+        if (ws != null && this.relayWs == ws) {
+            this.relayWs = null;
+            this.handshakeSentForConnection = false;
+            this.lastSentHandshakeAddress = "";
+        }
+        if (ws != null) {
+            try {
+                ws.abort();
+            } catch (Throwable ignored) {
             }
         }
     }
@@ -376,8 +424,31 @@ public class PlayerBadgeManager {
 
                 @Override
                 public void onOpen(WebSocket webSocket) {
-                    isConnectingRelay = false;
-                    relayWs = webSocket;
+                    WebSocket prev;
+                    synchronized (PlayerBadgeManager.this) {
+                        isConnectingRelay = false;
+                        if (!HudConfig.INSTANCE.relayServerEnabled) {
+                            try {
+                                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "disabled");
+                            } catch (Throwable ignored) {
+                                try {
+                                    webSocket.abort();
+                                } catch (Throwable ignored2) {
+                                }
+                            }
+                            return;
+                        }
+                        prev = relayWs;
+                        relayWs = webSocket;
+                        handshakeSentForConnection = false;
+                        lastSentHandshakeAddress = "";
+                    }
+                    if (prev != null && prev != webSocket) {
+                        try {
+                            prev.abort();
+                        } catch (Throwable ignored) {
+                        }
+                    }
                     class_310 mc = class_310.method_1551();
                     sendHandshake(mc);
                     String action = pendingRoomAction;
@@ -413,24 +484,36 @@ public class PlayerBadgeManager {
 
                 @Override
                 public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-                    isConnectingRelay = false;
-                    relayWs = null;
+                    synchronized (PlayerBadgeManager.this) {
+                        isConnectingRelay = false;
+                        if (relayWs == webSocket) {
+                            relayWs = null;
+                            handshakeSentForConnection = false;
+                            lastSentHandshakeAddress = "";
+                        }
+                    }
                     return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
                 }
 
                 @Override
                 public void onError(WebSocket webSocket, Throwable error) {
-                    isConnectingRelay = false;
-                    relayWs = null;
+                    synchronized (PlayerBadgeManager.this) {
+                        isConnectingRelay = false;
+                        if (relayWs == webSocket) {
+                            relayWs = null;
+                            handshakeSentForConnection = false;
+                            lastSentHandshakeAddress = "";
+                        }
+                    }
                 }
             }).exceptionally(ex -> {
-                isConnectingRelay = false;
-                relayWs = null;
+                synchronized (PlayerBadgeManager.this) {
+                    isConnectingRelay = false;
+                }
                 return null;
             });
         } catch (Throwable ignored) {
             this.isConnectingRelay = false;
-            this.relayWs = null;
         }
     }
 
@@ -481,8 +564,10 @@ public class PlayerBadgeManager {
         msg.addProperty("version", "2.8");
         try {
             ws.sendText(msg.toString(), true);
+            this.handshakeSentForConnection = true;
+            this.lastSentHandshakeAddress = sIp;
         } catch (Throwable ignored) {
-            this.relayWs = null;
+            this.clearRelayWsIfMatch(ws);
         }
     }
 
@@ -579,6 +664,7 @@ public class PlayerBadgeManager {
     }
 
     public void leaveRoom() {
+        this.roomSessionGen.incrementAndGet();
         boolean wasHost = this.isHost;
         WebSocket ws = this.relayWs;
         if (ws != null) {
@@ -598,6 +684,9 @@ public class PlayerBadgeManager {
         this.syncedTrack = null;
         this.roomMembers.clear();
         this.lastResolvedTrackKey = "";
+        this.resolvingTrackKey = "";
+        this.lastFailedResolveTrackKey = "";
+        this.lastFailedResolveTime = 0L;
         this.cachedResolvedDirectUrl = "";
         this.cachedResolvedCoverUrl = "";
         this.isResolvingDirectUrl = false;
@@ -611,10 +700,17 @@ public class PlayerBadgeManager {
         WebSocket ws = this.relayWs;
         this.relayWs = null;
         this.isConnectingRelay = false;
+        this.handshakeSentForConnection = false;
+        this.lastSentHandshakeAddress = "";
         if (ws != null) {
             try {
                 ws.sendClose(WebSocket.NORMAL_CLOSURE, "shutdown");
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+                try {
+                    ws.abort();
+                } catch (Throwable ignored2) {
+                }
+            }
         }
     }
 
@@ -637,25 +733,32 @@ public class PlayerBadgeManager {
                 if (coverUrl.isEmpty()) {
                     coverUrl = this.cachedResolvedCoverUrl;
                 }
-            } else if (!this.isResolvingDirectUrl) {
-                this.lastResolvedTrackKey = trackKey;
-                this.cachedResolvedDirectUrl = "";
-                this.cachedResolvedCoverUrl = "";
+            } else if (!trackKey.equals(this.resolvingTrackKey) && !(trackKey.equals(this.lastFailedResolveTrackKey) && now - this.lastFailedResolveTime < 15000L)) {
+                this.resolvingTrackKey = trackKey;
                 this.isResolvingDirectUrl = true;
+                final String fTrackKey = trackKey;
                 final String fArtist = state.artist();
                 final String fTitle = state.title();
                 CompletableFuture.runAsync(() -> {
                     try {
                         String[] res = com.example.yandexmusichud.local.SafeModeStreamer.INSTANCE.resolveDirectMp3Url(fArtist, fTitle);
                         if (res != null && res.length > 0 && res[0] != null && !res[0].isEmpty()) {
-                            cachedResolvedDirectUrl = res[0];
-                            if (res.length > 1 && res[1] != null) {
-                                cachedResolvedCoverUrl = res[1];
-                            }
+                            this.cachedResolvedDirectUrl = res[0];
+                            this.cachedResolvedCoverUrl = (res.length > 1 && res[1] != null) ? res[1] : "";
+                            this.lastResolvedTrackKey = fTrackKey;
+                            this.lastFailedResolveTrackKey = "";
+                        } else {
+                            this.lastFailedResolveTrackKey = fTrackKey;
+                            this.lastFailedResolveTime = System.currentTimeMillis();
                         }
                     } catch (Throwable ignored) {
+                        this.lastFailedResolveTrackKey = fTrackKey;
+                        this.lastFailedResolveTime = System.currentTimeMillis();
                     } finally {
-                        isResolvingDirectUrl = false;
+                        if (fTrackKey.equals(this.resolvingTrackKey)) {
+                            this.resolvingTrackKey = "";
+                        }
+                        this.isResolvingDirectUrl = false;
                     }
                 });
             }
@@ -747,9 +850,15 @@ public class PlayerBadgeManager {
         }
         boolean active = !title.isEmpty() || !artist.isEmpty();
         TrackState nextTrack = new TrackState(active, title, artist, album, st, pos, dur, null, System.currentTimeMillis(), directUrl, coverUrl);
+        final long gen = this.roomSessionGen.get();
         this.syncedTrack = nextTrack;
         if (!this.isHost) {
-            CompletableFuture.runAsync(() -> com.example.yandexmusichud.local.LocalMusicPlayer.getInstance().syncToTrack(nextTrack));
+            CompletableFuture.runAsync(() -> {
+                if (this.roomSessionGen.get() != gen || this.isHost || !this.isInRoom()) {
+                    return;
+                }
+                com.example.yandexmusichud.local.LocalMusicPlayer.getInstance().syncToTrack(nextTrack);
+            });
         }
     }
 
@@ -785,34 +894,42 @@ public class PlayerBadgeManager {
                     }
                 }
             } else if ("room_created".equals(event)) {
+                long gen = this.roomSessionGen.incrementAndGet();
                 this.currentRoom = getJsonString(obj, "room", "");
                 this.isHost = true;
                 this.roomHasPassword = getJsonBoolean(obj, "has_password", false);
                 this.roomMembers.clear();
+                RoomMember hostEntry = new RoomMember("\u0425\u043e\u0441\u0442", "", true, this.relayPingMs);
+                this.roomMembers.add(hostEntry);
                 class_310 mc = class_310.method_1551();
-                String myName = mc.field_1724 != null ? mc.field_1724.method_5477().getString() : "Хост";
-                String myUuid = mc.field_1724 != null ? mc.field_1724.method_5667().toString() : "";
-                this.roomMembers.add(new RoomMember(myName, myUuid, true, this.relayPingMs));
                 com.example.yandexmusichud.compat.VoiceChatCompat.onRoomJoined(this.currentRoom, "");
                 sendChatAsync(mc, "§b♫ [Music Sync] §aКомната создана! Код: §e" + this.currentRoom + (this.roomHasPassword ? " §6[С паролем]" : "") + " §7(Друзья могут ввести: §f/musicsync join " + this.currentRoom + "§7)");
                 if (mc != null) {
                     mc.execute(() -> {
+                        if (this.roomSessionGen.get() == gen && mc.field_1724 != null) {
+                            String realName = mc.field_1724.method_5477().getString();
+                            String realUuid = mc.field_1724.method_5667().toString();
+                            int idx = this.roomMembers.indexOf(hostEntry);
+                            if (idx >= 0) {
+                                this.roomMembers.set(idx, new RoomMember(realName, realUuid, true, this.relayPingMs));
+                            }
+                        }
                         if (mc.field_1755 instanceof MusicSyncScreen s) {
                             s.refreshUI();
                         }
                     });
                 }
             } else if ("joined_room".equals(event)) {
+                long gen = this.roomSessionGen.incrementAndGet();
                 this.currentRoom = getJsonString(obj, "room", "");
                 this.isHost = false;
                 this.roomHasPassword = getJsonBoolean(obj, "has_password", false);
                 this.roomHostName = getJsonString(obj, "host_name", "Хост");
                 this.roomMembers.clear();
                 this.roomMembers.add(new RoomMember(this.roomHostName, "", true, 0));
+                RoomMember selfEntry = new RoomMember("\u0418\u0433\u0440\u043e\u043a", "", false, this.relayPingMs);
+                this.roomMembers.add(selfEntry);
                 class_310 mc = class_310.method_1551();
-                String myName = mc.field_1724 != null ? mc.field_1724.method_5477().getString() : "Игрок";
-                String myUuid = mc.field_1724 != null ? mc.field_1724.method_5667().toString() : "";
-                this.roomMembers.add(new RoomMember(myName, myUuid, false, this.relayPingMs));
                 com.example.yandexmusichud.compat.VoiceChatCompat.onRoomJoined(this.currentRoom, this.roomHostName);
                 sendChatAsync(mc, "§b♫ [Music Sync] §aВы вошли в комнату §e" + this.currentRoom + " §7(Хост: §f" + this.roomHostName + "§7)");
                 if (obj.has("track") && obj.get("track").isJsonObject()) {
@@ -820,6 +937,14 @@ public class PlayerBadgeManager {
                 }
                 if (mc != null) {
                     mc.execute(() -> {
+                        if (this.roomSessionGen.get() == gen && mc.field_1724 != null) {
+                            String realName = mc.field_1724.method_5477().getString();
+                            String realUuid = mc.field_1724.method_5667().toString();
+                            int idx = this.roomMembers.indexOf(selfEntry);
+                            if (idx >= 0) {
+                                this.roomMembers.set(idx, new RoomMember(realName, realUuid, false, this.relayPingMs));
+                            }
+                        }
                         if (mc.field_1755 instanceof MusicSyncScreen s) {
                             s.refreshUI();
                         }

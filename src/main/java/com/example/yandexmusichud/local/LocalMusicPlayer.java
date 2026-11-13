@@ -305,12 +305,14 @@ public class LocalMusicPlayer {
     }
 
     private boolean matchesTrack(LocalMusicTrack track, String title, String artist) {
-        if (track == null) {
+        if (track == null || title == null || title.isBlank()) {
             return false;
         }
         String t = track.getTitle().trim();
         String a = track.getArtist().trim();
-        if (t.equalsIgnoreCase(title) && (artist.isEmpty() || a.equalsIgnoreCase(artist) || a.isEmpty())) {
+        String safeArtist = artist != null ? artist.trim() : "";
+        boolean trackArtistUnspecified = a.isEmpty() || "\u041c\u043e\u044f \u043c\u0443\u0437\u044b\u043a\u0430".equalsIgnoreCase(a);
+        if (t.equalsIgnoreCase(title.trim()) && (safeArtist.isEmpty() || trackArtistUnspecified || a.equalsIgnoreCase(safeArtist))) {
             return true;
         }
         String fn = track.getPath().getFileName().toString();
@@ -318,13 +320,13 @@ public class LocalMusicPlayer {
         if (dot > 0) {
             fn = fn.substring(0, dot);
         }
-        String normFn = fn.toLowerCase(Locale.ROOT);
-        String normT = title.toLowerCase(Locale.ROOT);
-        String normA = artist.toLowerCase(Locale.ROOT);
-        if (!normT.isEmpty() && normFn.contains(normT)) {
+        String normFn = fn.trim().toLowerCase(Locale.ROOT);
+        String normT = title.trim().toLowerCase(Locale.ROOT);
+        String normA = safeArtist.toLowerCase(Locale.ROOT);
+        if (!normA.isEmpty() && (normFn.equals(normA + " - " + normT) || normFn.equals(normT + " - " + normA) || normFn.equals(normA + "-" + normT))) {
             return true;
         }
-        if (normFn.equalsIgnoreCase(normT) || normFn.equalsIgnoreCase(normA + " - " + normT) || normFn.equalsIgnoreCase(normT + " - " + normA)) {
+        if ((normA.isEmpty() || trackArtistUnspecified) && normFn.equals(normT)) {
             return true;
         }
         return false;
@@ -415,6 +417,12 @@ public class LocalMusicPlayer {
         this.isPaused = false;
         this.currentPositionOffsetMs = 0L;
         this.pausedPositionMs = 0L;
+        this.lastReportedTrack = null;
+        this.driftAdjustmentMs = 0L;
+        this.lastCalculatedDriftMs = 0L;
+        this.lastSyncTimestamp = 0L;
+        this.lastSyncedMissingKey = "";
+        this.consecutivePlaybackErrors = 0;
     }
 
     public synchronized void next() {
@@ -457,11 +465,7 @@ public class LocalMusicPlayer {
         } else {
             targetMs = Math.max(0L, targetMs);
         }
-        this.startPlayback(track, targetMs);
-        if (wasPaused) {
-            this.isPaused = true;
-            this.pausedPositionMs = targetMs;
-        }
+        this.startPlayback(track, targetMs, wasPaused);
     }
 
     public long getPositionMs() {
@@ -523,10 +527,14 @@ public class LocalMusicPlayer {
     }
 
     private synchronized void startPlayback(LocalMusicTrack track, long startOffsetMs) {
+        this.startPlayback(track, startOffsetMs, false);
+    }
+
+    private synchronized void startPlayback(LocalMusicTrack track, long startOffsetMs, boolean startPaused) {
         long sessionId = ++this.playbackSessionId;
         this.stopCurrentThread();
         this.isPlaying = true;
-        this.isPaused = false;
+        this.isPaused = startPaused;
         this.shouldStop = false;
         this.currentPositionOffsetMs = startOffsetMs;
         this.pausedPositionMs = startOffsetMs;
@@ -555,9 +563,10 @@ public class LocalMusicPlayer {
 
         if (sessionId == this.playbackSessionId && this.isPlaying && !this.shouldStop && !Thread.currentThread().isInterrupted()) {
             long elapsedNs = System.nanoTime() - startNs;
-            if (hadError && elapsedNs < 1_000_000_000L) {
+            boolean rapidExit = hadError ? (elapsedNs < 1_000_000_000L) : (elapsedNs < 300_000_000L);
+            if (rapidExit) {
                 ++this.consecutivePlaybackErrors;
-                if (this.consecutivePlaybackErrors >= 2 || this.repeat) {
+                if (this.consecutivePlaybackErrors >= 2 || (hadError && this.repeat)) {
                     CompletableFuture.runAsync(() -> {
                         if (sessionId == this.playbackSessionId) {
                             this.stop();
@@ -587,6 +596,9 @@ public class LocalMusicPlayer {
             device.open(decoder);
             this.currentBitstream = bitstream;
             this.currentAudioDevice = device;
+            if (this.isPaused) {
+                device.pauseLine();
+            }
 
             if (startOffsetMs > 0L) {
                 double skippedMs = 0.0;
@@ -607,6 +619,7 @@ public class LocalMusicPlayer {
                     try {
                         Thread.sleep(25);
                     } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                         break;
                     }
                     continue;
@@ -623,7 +636,11 @@ public class LocalMusicPlayer {
                         try {
                             Thread.sleep(2);
                             this.driftAdjustmentMs -= 2L;
-                        } catch (InterruptedException ignored) {}
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            bitstream.closeFrame();
+                            break;
+                        }
                     } else if (this.driftAdjustmentMs < -25L) {
                         Header skipH = bitstream.readFrame();
                         if (skipH != null) {
@@ -660,7 +677,8 @@ public class LocalMusicPlayer {
 
     private void playWavStream(LocalMusicTrack track, long startOffsetMs, long sessionId) throws Exception {
         SourceDataLine line = null;
-        try (AudioInputStream rawAis = AudioSystem.getAudioInputStream(new BufferedInputStream(Files.newInputStream(track.getPath()), 65536))) {
+        try (InputStream rawIn = new BufferedInputStream(Files.newInputStream(track.getPath()), 65536);
+             AudioInputStream rawAis = AudioSystem.getAudioInputStream(rawIn)) {
             AudioFormat baseFmt = rawAis.getFormat();
             AudioFormat pcmFmt = new AudioFormat(
                     AudioFormat.Encoding.PCM_SIGNED,
@@ -675,15 +693,17 @@ public class LocalMusicPlayer {
                 DataLine.Info info = new DataLine.Info(SourceDataLine.class, pcmFmt);
                 line = (SourceDataLine)AudioSystem.getLine(info);
                 line.open(pcmFmt);
+                this.currentLine = line;
                 if (!this.isPaused) {
                     line.start();
                 }
-                this.currentLine = line;
 
+                int frameSize = Math.max(1, pcmFmt.getFrameSize());
+                double bytesPerMs = (pcmFmt.getFrameRate() * (double)frameSize) / 1000.0;
                 if (startOffsetMs > 0L) {
-                    int frameSize = Math.max(1, pcmFmt.getFrameSize());
                     long framesToSkip = (long)((startOffsetMs / 1000.0) * pcmFmt.getFrameRate());
                     long bytesRemaining = framesToSkip * (long)frameSize;
+                    long totalSkipped = 0L;
                     byte[] skipBuf = new byte[frameSize * 2048];
                     while (bytesRemaining > 0L && sessionId == this.playbackSessionId && !this.shouldStop) {
                         int toRead = (int)Math.min((long)skipBuf.length, bytesRemaining);
@@ -695,7 +715,11 @@ public class LocalMusicPlayer {
                         if (r <= 0) {
                             break;
                         }
+                        totalSkipped += r;
                         bytesRemaining -= r;
+                    }
+                    if (bytesPerMs > 0.0) {
+                        this.currentPositionOffsetMs = Math.round((double)totalSkipped / bytesPerMs);
                     }
                 }
 
@@ -706,6 +730,7 @@ public class LocalMusicPlayer {
                         try {
                             Thread.sleep(25);
                         } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
                             break;
                         }
                         continue;
@@ -716,6 +741,26 @@ public class LocalMusicPlayer {
                     }
                     applySoftwareVolume(buffer, read, this.getEffectiveVolume());
                     line.write(buffer, 0, read);
+                    if (this.driftAdjustmentMs > 25L) {
+                        try {
+                            Thread.sleep(2);
+                            this.driftAdjustmentMs -= 2L;
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    } else if (this.driftAdjustmentMs < -25L && bytesPerMs > 0.0) {
+                        int maxSkipBytes = Math.min(buffer.length, Math.max(frameSize, (int)(20.0 * bytesPerMs)));
+                        maxSkipBytes = (maxSkipBytes / frameSize) * frameSize;
+                        if (maxSkipBytes > 0) {
+                            int skipped = pcmAis.read(buffer, 0, maxSkipBytes);
+                            if (skipped > 0) {
+                                long skipMs = Math.max(1L, Math.round((double)skipped / bytesPerMs));
+                                this.currentPositionOffsetMs += skipMs;
+                                this.driftAdjustmentMs += skipMs;
+                            }
+                        }
+                    }
                 }
                 if (sessionId == this.playbackSessionId && this.isPlaying && !this.shouldStop) {
                     line.drain();
@@ -768,17 +813,31 @@ public class LocalMusicPlayer {
             DataLine.Info lineInfo = new DataLine.Info(SourceDataLine.class, pcmFmt);
             line = (SourceDataLine)AudioSystem.getLine(lineInfo);
             line.open(pcmFmt);
+            this.currentLine = line;
             if (!this.isPaused) {
                 line.start();
             }
-            this.currentLine = line;
 
             if (startOffsetMs > 0L) {
                 int targetSample = (int)((startOffsetMs / 1000.0) * sampleRate);
-                STBVorbis.stb_vorbis_seek_frame(dec, targetSample);
+                if (STBVorbis.stb_vorbis_seek_frame(dec, targetSample)) {
+                    this.currentPositionOffsetMs = Math.round((double)targetSample * 1000.0 / (double)sampleRate);
+                } else {
+                    short[] skipScratch = new short[2048 * channels];
+                    long skippedSamples = 0L;
+                    while (skippedSamples < (long)targetSample && sessionId == this.playbackSessionId && !this.shouldStop) {
+                        int got = STBVorbis.stb_vorbis_get_samples_short_interleaved(dec, channels, skipScratch);
+                        if (got <= 0) {
+                            break;
+                        }
+                        skippedSamples += got;
+                    }
+                    this.currentPositionOffsetMs = Math.round((double)skippedSamples * 1000.0 / (double)sampleRate);
+                }
             }
 
             short[] pcmBuffer = new short[2048 * channels];
+            short[] driftSkipBuffer = new short[Math.max(1, sampleRate / 50) * channels];
             byte[] byteBuffer = new byte[pcmBuffer.length * 2];
 
             while (sessionId == this.playbackSessionId && this.isPlaying && !this.shouldStop && !Thread.currentThread().isInterrupted()) {
@@ -786,6 +845,7 @@ public class LocalMusicPlayer {
                     try {
                         Thread.sleep(25);
                     } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                         break;
                     }
                     continue;
@@ -807,6 +867,22 @@ public class LocalMusicPlayer {
                     byteBuffer[i * 2 + 1] = (byte)((val >> 8) & 0xFF);
                 }
                 line.write(byteBuffer, 0, totalShorts * 2);
+                if (this.driftAdjustmentMs > 25L) {
+                    try {
+                        Thread.sleep(2);
+                        this.driftAdjustmentMs -= 2L;
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                } else if (this.driftAdjustmentMs < -25L) {
+                    int skipped = STBVorbis.stb_vorbis_get_samples_short_interleaved(dec, channels, driftSkipBuffer);
+                    if (skipped > 0) {
+                        long skipMs = Math.max(1L, Math.round((double)skipped * 1000.0 / (double)sampleRate));
+                        this.currentPositionOffsetMs += skipMs;
+                        this.driftAdjustmentMs += skipMs;
+                    }
+                }
             }
             if (sessionId == this.playbackSessionId && this.isPlaying && !this.shouldStop) {
                 line.drain();

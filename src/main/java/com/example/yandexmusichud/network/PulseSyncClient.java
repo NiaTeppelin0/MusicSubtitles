@@ -302,10 +302,12 @@ public class PulseSyncClient {
 
     private long parsePositionMs(JsonObject json, JsonObject trackObj, long durMs) {
         double pos = -1.0;
+        double progDur = -1.0;
         if (json.has("progress")) {
             JsonElement p = json.get("progress");
             if (p.isJsonObject()) {
                 JsonObject po = p.getAsJsonObject();
+                progDur = this.getDouble(po, "duration", -1.0);
                 pos = this.getDouble(po, "position", -1.0);
                 if (pos < 0.0) {
                     pos = this.getDouble(po, "current", -1.0);
@@ -342,8 +344,20 @@ public class PulseSyncClient {
         if (pos <= 0.0) {
             return 0L;
         }
-        if (pos < 10000.0 && durMs > 10000L) {
+        if (progDur > 10000.0) {
+            return (long)pos;
+        }
+        if (progDur > 0.0 && progDur <= 10800.0 && durMs > 0L && Math.abs(progDur * 1000.0 - (double)durMs) < 5000.0) {
             return (long)(pos * 1000.0);
+        }
+        if (durMs > 0L) {
+            if (pos * 1000.0 > (double)(durMs + 5000L)) {
+                return (long)pos;
+            }
+            if (pos != Math.floor(pos) || pos < 7200.0) {
+                return (long)(pos * 1000.0);
+            }
+            return (long)pos;
         }
         if (pos > 0.0 && pos < 7200.0) {
             return (long)(pos * 1000.0);

@@ -34,31 +34,31 @@ public record TrackState(boolean isActive, String title, String artist, String a
 
     public static String detectPlatform(String title, String artist, String album) {
         String full = ((title != null ? title : "") + " " + (artist != null ? artist : "") + " " + (album != null ? album : "")).toLowerCase(Locale.ROOT);
-        if (full.contains("local") || full.contains("моя музыка") || full.contains("локальн")) {
+        if (full.contains("\u043c\u043e\u044f \u043c\u0443\u0437\u044b\u043a\u0430") || full.contains("\u043b\u043e\u043a\u0430\u043b\u044c\u043d") || full.contains("local music") || full.contains("local audio")) {
             return "local";
         }
-        if (full.contains("spotify")) {
+        if (full.contains("spotify") || full.contains("open.spotify")) {
             return "spotify";
         }
-        if (full.contains("youtube") || full.contains("\u044e\u0442\u0443\u0431") || full.contains("music.youtube") || full.contains("youtu.be") || full.contains("- topic") || full.contains("official video") || full.contains("music video")) {
+        if (full.contains("youtube") || full.contains("\u044e\u0442\u0443\u0431") || full.contains("music.youtube") || full.contains("youtu.be") || full.contains("- topic")) {
             return "youtube";
         }
-        if (full.contains("vk") || full.contains("\u0432\u043a\u043e\u043d\u0442\u0430\u043a\u0442\u0435") || full.contains("vk music")) {
+        if (full.contains("\u0432\u043a\u043e\u043d\u0442\u0430\u043a\u0442\u0435") || full.contains("vk music") || full.contains("vk \u043c\u0443\u0437\u044b\u043a\u0430") || full.contains("vk.com")) {
             return "vk";
         }
         if (full.contains("soundcloud")) {
             return "soundcloud";
         }
-        if (full.contains("apple") || full.contains("itunes") || full.contains("apple music")) {
+        if (full.contains("apple music") || full.contains("itunes") || full.contains("music.apple")) {
             return "apple";
         }
-        if (full.contains("yandex") || full.contains("\u044f\u043d\u0434\u0435\u043a\u0441")) {
+        if (full.contains("yandex music") || full.contains("\u044f\u043d\u0434\u0435\u043a\u0441 \u043c\u0443\u0437\u044b\u043a\u0430") || full.contains("\u044f\u043d\u0434\u0435\u043a\u0441.\u043c\u0443\u0437\u044b\u043a\u0430") || full.contains("music.yandex")) {
             return "yandex";
         }
-        if (full.contains("chrome") || full.contains("edge") || full.contains("firefox") || full.contains("opera") || full.contains("brave") || full.contains("browser") || full.contains("\u0431\u0440\u0430\u0443\u0437\u0435\u0440")) {
+        if (full.contains("google chrome") || full.contains("microsoft edge") || full.contains("mozilla firefox") || full.contains("opera gx") || full.contains("brave browser") || full.contains("\u044f\u043d\u0434\u0435\u043a\u0441 \u0431\u0440\u0430\u0443\u0437\u0435\u0440") || full.contains("yandex browser")) {
             return "browser";
         }
-        if (full.contains("aimp") || full.contains("vlc") || full.contains("foobar") || full.contains("winamp")) {
+        if (full.contains("aimp") || full.contains("vlc media player") || full.contains("foobar2000") || full.contains("winamp")) {
             return "player";
         }
         return "music";

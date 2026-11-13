@@ -87,6 +87,7 @@ public class LyricsConsensusEngine {
             }
         }
 
+        List<Candidate> noTitleMatchCandidates = new ArrayList<Candidate>();
         for (Candidate c : arrayList) {
             if (c.isSynced) {
                 c.score += 150.0;
@@ -135,8 +136,8 @@ public class LyricsConsensusEngine {
                 }
                 if (foundKw > 0) {
                     c.score += 200.0 * ((double)foundKw / (double)titleKeywords.size());
-                } else if (titleKeywords.size() >= 2 && !c.hasCrossConsensus) {
-                    c.score -= 180.0;
+                } else if (titleKeywords.size() >= 2) {
+                    noTitleMatchCandidates.add(c);
                 }
             }
         }
@@ -164,6 +165,11 @@ public class LyricsConsensusEngine {
                         candidate3.score -= 450.0;
                     }
                 }
+            }
+        }
+        for (Candidate c : noTitleMatchCandidates) {
+            if (!c.hasCrossConsensus) {
+                c.score -= 180.0;
             }
         }
 

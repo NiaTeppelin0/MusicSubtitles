@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -51,8 +52,10 @@ public class HelperProcessManager {
     private boolean started = false;
 
     private HttpServer linuxServer;
+    private ExecutorService linuxHttpExecutor;
     private ScheduledExecutorService linuxPoller;
     private HttpServer macServer;
+    private ExecutorService macHttpExecutor;
     private ScheduledExecutorService macPoller;
 
     private volatile String cachedNowPlayingJson = "{\"isActive\":false,\"status\":\"stopped\"}";
@@ -425,11 +428,15 @@ public class HelperProcessManager {
                 this.stop();
             });
 
-            this.linuxServer.setExecutor(Executors.newCachedThreadPool(r -> {
+            if (this.linuxHttpExecutor != null) {
+                this.linuxHttpExecutor.shutdownNow();
+            }
+            this.linuxHttpExecutor = Executors.newCachedThreadPool(r -> {
                 Thread t = new Thread(r, "MusicSubtitles-LinuxMprisServer");
                 t.setDaemon(true);
                 return t;
-            }));
+            });
+            this.linuxServer.setExecutor(this.linuxHttpExecutor);
             this.linuxServer.start();
 
             this.writePortFiles(targetPort);
@@ -585,7 +592,7 @@ public class HelperProcessManager {
             try {
                 Process p = new ProcessBuilder(c, "--help").start();
                 boolean ok = p.waitFor(300, TimeUnit.MILLISECONDS);
-                if (ok) {
+                if (ok && p.exitValue() == 0) {
                     this.cachedNowPlayingCliPath = c;
                     return c;
                 }
@@ -649,11 +656,15 @@ public class HelperProcessManager {
                 this.stop();
             });
 
-            this.macServer.setExecutor(Executors.newCachedThreadPool(r -> {
+            if (this.macHttpExecutor != null) {
+                this.macHttpExecutor.shutdownNow();
+            }
+            this.macHttpExecutor = Executors.newCachedThreadPool(r -> {
                 Thread t = new Thread(r, "MusicSubtitles-MacOsServer");
                 t.setDaemon(true);
                 return t;
-            }));
+            });
+            this.macServer.setExecutor(this.macHttpExecutor);
             this.macServer.start();
 
             this.writePortFiles(targetPort);
@@ -676,46 +687,53 @@ public class HelperProcessManager {
             String cli = this.resolveNowPlayingCli();
             if (cli != null) {
                 String output = runCommandWithTimeout(List.of(cli, "get", "title", "artist", "album", "playbackRate", "elapsedTime", "duration"), 350L);
-                if (output != null && !output.isEmpty() && !output.contains("null")) {
+                if (output != null && !output.isEmpty()) {
                     String[] lines = output.split("\\r?\\n");
-                    if (lines.length >= 2 && (!lines[0].isBlank() || !lines[1].isBlank())) {
-                        String title = lines[0].trim();
-                        String artist = lines.length > 1 ? lines[1].trim() : "";
-                        String album = lines.length > 2 ? lines[2].trim() : "";
-                        double rate = 1.0;
-                        if (lines.length > 3) {
-                            try {
-                                rate = Double.parseDouble(lines[3].trim());
-                            } catch (Exception ignored) {}
-                        }
-                        String status = rate > 0.0 ? "playing" : "paused";
-                        long posMs = 0L;
-                        if (lines.length > 4) {
-                            try {
-                                posMs = Math.max(0L, (long)(Double.parseDouble(lines[4].trim()) * 1000.0));
-                            } catch (Exception ignored) {}
-                        }
-                        long durMs = 0L;
-                        if (lines.length > 5) {
-                            try {
-                                durMs = Math.max(0L, (long)(Double.parseDouble(lines[5].trim()) * 1000.0));
-                            } catch (Exception ignored) {}
-                        }
-                        if (!title.isEmpty() || !artist.isEmpty()) {
-                            StringBuilder sb = new StringBuilder();
-                            sb.append("{");
-                            sb.append("\"isActive\":true,");
-                            sb.append("\"title\":\"").append(escapeJson(title)).append("\",");
-                            sb.append("\"artist\":\"").append(escapeJson(artist)).append("\",");
-                            sb.append("\"album\":\"").append(escapeJson(album)).append("\",");
-                            sb.append("\"status\":\"").append(status).append("\",");
-                            sb.append("\"positionMs\":").append(posMs).append(",");
-                            sb.append("\"durationMs\":").append(durMs).append(",");
-                            sb.append("\"platform\":\"player\",");
-                            sb.append("\"platformName\":\"macOS Media\"");
-                            sb.append("}");
-                            this.cachedNowPlayingJson = sb.toString();
-                            return;
+                    if (lines.length >= 2) {
+                        String rawTitle = lines[0].trim();
+                        String rawArtist = lines.length > 1 ? lines[1].trim() : "";
+                        String rawAlbum = lines.length > 2 ? lines[2].trim() : "";
+                        boolean titleMissing = rawTitle.isEmpty() || "null".equalsIgnoreCase(rawTitle) || "(null)".equalsIgnoreCase(rawTitle);
+                        boolean artistMissing = rawArtist.isEmpty() || "null".equalsIgnoreCase(rawArtist) || "(null)".equalsIgnoreCase(rawArtist);
+                        if (!titleMissing || !artistMissing) {
+                            String title = titleMissing ? "" : rawTitle;
+                            String artist = artistMissing ? "" : rawArtist;
+                            String album = ("null".equalsIgnoreCase(rawAlbum) || "(null)".equalsIgnoreCase(rawAlbum)) ? "" : rawAlbum;
+                            double rate = 1.0;
+                            if (lines.length > 3) {
+                                try {
+                                    rate = Double.parseDouble(lines[3].trim());
+                                } catch (Exception ignored) {}
+                            }
+                            String status = rate > 0.0 ? "playing" : "paused";
+                            long posMs = 0L;
+                            if (lines.length > 4) {
+                                try {
+                                    posMs = Math.max(0L, (long)(Double.parseDouble(lines[4].trim()) * 1000.0));
+                                } catch (Exception ignored) {}
+                            }
+                            long durMs = 0L;
+                            if (lines.length > 5) {
+                                try {
+                                    durMs = Math.max(0L, (long)(Double.parseDouble(lines[5].trim()) * 1000.0));
+                                } catch (Exception ignored) {}
+                            }
+                            if (!title.isEmpty() || !artist.isEmpty()) {
+                                StringBuilder sb = new StringBuilder();
+                                sb.append("{");
+                                sb.append("\"isActive\":true,");
+                                sb.append("\"title\":\"").append(escapeJson(title)).append("\",");
+                                sb.append("\"artist\":\"").append(escapeJson(artist)).append("\",");
+                                sb.append("\"album\":\"").append(escapeJson(album)).append("\",");
+                                sb.append("\"status\":\"").append(status).append("\",");
+                                sb.append("\"positionMs\":").append(posMs).append(",");
+                                sb.append("\"durationMs\":").append(durMs).append(",");
+                                sb.append("\"platform\":\"player\",");
+                                sb.append("\"platformName\":\"macOS Media\"");
+                                sb.append("}");
+                                this.cachedNowPlayingJson = sb.toString();
+                                return;
+                            }
                         }
                     }
                 }
@@ -1042,6 +1060,11 @@ public class HelperProcessManager {
     public synchronized void stop() {
         this.started = false;
         this.closeDuckHelper();
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (!os.contains("win") && (this.linuxBaseVolume >= 0.0 || this.macSpotifyBaseVol >= 0 || this.macMusicBaseVol >= 0)) {
+            this.lastSentDuckFactor = 1.0f;
+            this.sendExternalDuckFactorSync(1.0f);
+        }
         if (this.linuxPoller != null) {
             this.linuxPoller.shutdownNow();
             this.linuxPoller = null;
@@ -1052,6 +1075,10 @@ public class HelperProcessManager {
             } catch (Exception ignored) {}
             this.linuxServer = null;
         }
+        if (this.linuxHttpExecutor != null) {
+            this.linuxHttpExecutor.shutdownNow();
+            this.linuxHttpExecutor = null;
+        }
         if (this.macPoller != null) {
             this.macPoller.shutdownNow();
             this.macPoller = null;
@@ -1061,6 +1088,10 @@ public class HelperProcessManager {
                 this.macServer.stop(0);
             } catch (Exception ignored) {}
             this.macServer = null;
+        }
+        if (this.macHttpExecutor != null) {
+            this.macHttpExecutor.shutdownNow();
+            this.macHttpExecutor = null;
         }
         if (this.port > 0) {
             try {

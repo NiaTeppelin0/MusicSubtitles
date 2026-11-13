@@ -164,31 +164,19 @@ public class NowPlayingClient {
                     long posMs = this.getLongOrDefault(json, "positionMs", 0L);
                     long durMs = this.getLongOrDefault(json, "durationMs", 0L);
                     String coverHash = this.getStringOrDefault(json, "coverHash", null);
-                    String detected = TrackState.detectPlatform(title, artist, album);
-                    String platform = this.getStringOrDefault(json, "platform", null);
-                    if (platform == null) {
-                        platform = detected;
-                    }
+                    String rawPlatform = this.getStringOrDefault(json, "platform", null);
+                    String detected = TrackState.detectPlatform(rawTitle, rawArtist, album);
+                    boolean hasExplicitPlatform = rawPlatform != null && !rawPlatform.isBlank()
+                            && !"music".equalsIgnoreCase(rawPlatform)
+                            && !"unknown".equalsIgnoreCase(rawPlatform);
+                    String platform = hasExplicitPlatform ? rawPlatform : detected;
                     String platformName = this.getStringOrDefault(json, "platformName", null);
-                    if (platformName == null) {
+                    if (platformName == null || platformName.isBlank()) {
                         platformName = TrackState.platformDisplayName(platform);
                     }
                     String playUrl = this.getStringOrDefault(json, "playUrl", null);
-                    if (playUrl == null) {
-                        playUrl = TrackState.generatePlayUrlForPlatform(detected, title, artist);
-                    }
-                    if (!"music".equals(detected) && !"yandex".equals(detected)) {
-                        platform = detected;
-                        platformName = TrackState.platformDisplayName(detected);
-                        playUrl = TrackState.generatePlayUrlForPlatform(detected, title, artist);
-                    } else if ("yandex".equalsIgnoreCase(platform) && "\u042f\u043d\u0434\u0435\u043a\u0441 \u041c\u0443\u0437\u044b\u043a\u0430".equals(platformName)) {
-                        boolean hasYandexTrace;
-                        String fullLower = (title + " " + artist + " " + album).toLowerCase(Locale.ROOT);
-                        boolean bl2 = hasYandexTrace = fullLower.contains("\u044f\u043d\u0434\u0435\u043a\u0441") || fullLower.contains("yandex");
-                        if (!(hasYandexTrace || playUrl != null && playUrl.contains("music.yandex"))) {
-                            platform = "music";
-                            platformName = "\u041c\u0443\u0437\u044b\u043a\u0430";
-                        }
+                    if (playUrl == null || playUrl.isBlank()) {
+                        playUrl = TrackState.generatePlayUrlForPlatform(platform, title, artist);
                     }
                     float speed = this.getFloatOrDefault(json, "playbackSpeed", 1.0f);
                     TrackState prev = this.currentState.get();
@@ -228,7 +216,13 @@ public class NowPlayingClient {
                         this.currentState.set(pulseState);
                     } else {
                         this.currentState.set(state);
-                        if (coverHash != null && !coverHash.equals(this.lastCoverHash)) {
+                        if (coverHash == null || coverHash.isEmpty()) {
+                            if (this.lastCoverHash != null || this.lastCoverETag != null) {
+                                this.lastCoverHash = null;
+                                this.lastCoverETag = null;
+                                this.coverManager.resetToDefault();
+                            }
+                        } else if (!coverHash.equals(this.lastCoverHash)) {
                             this.fetchCoverAsync(coverHash);
                         }
                     }
@@ -236,6 +230,9 @@ public class NowPlayingClient {
                     this.currentState.set(pulseState);
                     this.backoffMs = Math.max(150, HudConfig.INSTANCE.pollIntervalMs);
                 } else {
+                    this.lastCoverHash = null;
+                    this.lastCoverETag = null;
+                    this.coverManager.resetToDefault();
                     this.currentState.set(TrackState.INACTIVE);
                     this.backoffMs = 1000;
                 }
@@ -250,6 +247,9 @@ public class NowPlayingClient {
                 this.backoffMs = Math.max(150, HudConfig.INSTANCE.pollIntervalMs);
             } else {
                 this.connected = false;
+                this.lastCoverHash = null;
+                this.lastCoverETag = null;
+                this.coverManager.resetToDefault();
                 this.currentState.set(TrackState.INACTIVE);
                 this.backoffMs = 1200;
             }
@@ -284,14 +284,21 @@ public class NowPlayingClient {
                         return;
                     }
                     if (code == 200) {
-                        JsonObject coverJson = JsonParser.parseString(response.body()).getAsJsonObject();
-                        String base64 = this.getStringOrDefault(coverJson, "coverBase64", null);
-                        if (base64 != null && !base64.isEmpty()) {
-                            this.lastCoverHash = coverHash;
-                            this.lastCoverETag = response.headers().firstValue("ETag").orElse(coverHash);
-                            this.coverManager.updateCover(base64);
+                        JsonElement coverEl = JsonParser.parseString(response.body());
+                        if (coverEl != null && coverEl.isJsonObject()) {
+                            JsonObject coverJson = coverEl.getAsJsonObject();
+                            String base64 = this.getStringOrDefault(coverJson, "coverBase64", null);
+                            if (base64 != null && !base64.isEmpty()) {
+                                this.lastCoverHash = coverHash;
+                                this.lastCoverETag = response.headers().firstValue("ETag").orElse(coverHash);
+                                this.coverManager.updateCover(base64);
+                                return;
+                            }
                         }
                     }
+                    this.lastCoverHash = null;
+                    this.lastCoverETag = null;
+                    this.coverManager.resetToDefault();
                 }
                 catch (Exception exception) {
 

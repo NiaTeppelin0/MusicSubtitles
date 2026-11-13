@@ -30,6 +30,8 @@ public class TwitchSettingsScreen extends class_437 {
     private final class_437 parent;
     private final TwitchLogoMergeAnimation introAnim;
     private class_342 channelField;
+    private long lastChannelEditTime = 0L;
+    private boolean channelDirty = false;
     private String feedbackMessage = "";
     private long feedbackTime = 0L;
     private int feedbackColor = 0x00E5FF;
@@ -147,9 +149,12 @@ public class TwitchSettingsScreen extends class_437 {
                 (class_2561)class_2561.method_43470((String)"Twitch Channel"));
         this.channelField.method_1852(HudConfig.INSTANCE.twitchChannel != null ? HudConfig.INSTANCE.twitchChannel : "");
         this.channelField.method_1863(text -> {
-            HudConfig.INSTANCE.twitchChannel = text.trim();
-            HudConfig.save();
-            TwitchManager.getInstance().checkLiveStatusAsync();
+            String trimmed = text != null ? text.trim() : "";
+            if (!trimmed.equals(HudConfig.INSTANCE.twitchChannel)) {
+                HudConfig.INSTANCE.twitchChannel = trimmed;
+                this.channelDirty = true;
+                this.lastChannelEditTime = System.currentTimeMillis();
+            }
         });
         this.method_37063(this.channelField);
 
@@ -247,10 +252,10 @@ public class TwitchSettingsScreen extends class_437 {
 
         double initDuration = class_3532.method_15350((double)(HudConfig.INSTANCE.twitchToastDurationSeconds - 2) / 13.0, 0.0, 1.0);
         ModernSliderWidget durationSlider = new ModernSliderWidget(col2X + 16 + toggleW, tRow3Y, toggleW, btnH,
-                "\u041f\u043e\u043a\u0430\u0437: ", initDuration, val -> String.format("%d \u0441\u0435\u043a", 2 + (int)(val * 13.0)), val -> {
-            HudConfig.INSTANCE.twitchToastDurationSeconds = 2 + (int)(val * 13.0);
-            HudConfig.save();
+                "\u041f\u043e\u043a\u0430\u0437: ", initDuration, val -> String.format("%d \u0441\u0435\u043a", 2 + (int)Math.round(val * 13.0)), val -> {
+            HudConfig.INSTANCE.twitchToastDurationSeconds = 2 + (int)Math.round(val * 13.0);
         });
+        durationSlider.setOnRelease(HudConfig::save);
         this.method_37063(durationSlider);
 
         int testCardY = card1Top + cardH + 6;
@@ -442,7 +447,7 @@ public class TwitchSettingsScreen extends class_437 {
             int avX = col1X + 16;
             int avY = statBoxY + 8;
             class_2960 avTex = tm.hasCustomAvatar() ? tm.getAvatarTextureId() : TWITCH_ICON;
-            int ringColor = tm.isLive() ? 0xFF00FF88 : 0xFF555566;
+            int ringColor = tm.isLive() ? 0x00FF88 : 0x555566;
 
             MusicHudRenderer.renderRoundedRect(context, avX - 2, avY - 2, avSize + 4, avSize + 4, 6, (int)(panelAlpha * 180.0f) << 24 | 0x1A0E2E);
             MusicHudRenderer.renderRoundedBorder(context, avX - 2, avY - 2, avSize + 4, avSize + 4, 6, (int)(panelAlpha * 255.0f) << 24 | ringColor, 0x44000000);
@@ -484,8 +489,8 @@ public class TwitchSettingsScreen extends class_437 {
             MusicHudRenderer.renderRoundedBorder(context, col2X, panelY, colW, cardH, 8, cardBorder2, 0x33000000);
             context.method_51433(this.field_22793, "\u00a7b\u2605 \u0421\u043e\u0431\u044b\u0442\u0438\u044f \u0438 \u041f\u043b\u0430\u0448\u043a\u0430 HUD", col2X + 12, panelY + 9, alphaInt << 24 | 0xFFFFFF, true);
 
-            int prevY = panelY + 86;
-            int prevH = cardH - 94;
+            int prevY = panelY + 94;
+            int prevH = cardH - 102;
             MusicHudRenderer.renderRoundedRect(context, col2X + 10, prevY, colW - 20, prevH, 6, (int)(panelAlpha * 120.0f) << 24 | 0x080612);
             MusicHudRenderer.renderRoundedBorder(context, col2X + 10, prevY, colW - 20, prevH, 6, (int)(panelAlpha * 80.0f) << 24 | 0x226688, 0x22000000);
 
@@ -726,9 +731,34 @@ public class TwitchSettingsScreen extends class_437 {
         this.feedbackTime = System.currentTimeMillis();
     }
 
+    private void flushPendingChannelEdit() {
+        if (this.channelDirty) {
+            this.channelDirty = false;
+            HudConfig.save();
+            TwitchManager.getInstance().checkLiveStatusAsync();
+        }
+    }
+
+    public void method_25393() {
+        super.method_25393();
+        if (this.channelDirty && System.currentTimeMillis() - this.lastChannelEditTime >= 700L) {
+            this.flushPendingChannelEdit();
+        }
+    }
+
+    public void method_25432() {
+        this.flushPendingChannelEdit();
+        super.method_25432();
+    }
+
     public boolean method_25404(class_11908 input) {
         if (input.comp_4795() == 256) {
             this.method_25419();
+            return true;
+        }
+        if ((input.comp_4795() == 257 || input.comp_4795() == 335) && this.channelField != null && this.channelField.method_25370()) {
+            this.flushPendingChannelEdit();
+            this.triggerFeedback("\u00a7b\u2714 \u041a\u0430\u043d\u0430\u043b Twitch \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d", 0x00E5FF);
             return true;
         }
         if (this.channelField != null && this.channelField.method_25404(input)) {
@@ -757,6 +787,7 @@ public class TwitchSettingsScreen extends class_437 {
     }
 
     public void method_25419() {
+        this.flushPendingChannelEdit();
         if (this.field_22787 != null) {
             this.field_22787.method_1507(this.parent);
         }

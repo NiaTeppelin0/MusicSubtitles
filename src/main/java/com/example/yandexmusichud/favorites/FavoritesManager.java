@@ -33,10 +33,10 @@ public class FavoritesManager {
     private final Map<String, FavoriteTrack> favoritesMap = new ConcurrentHashMap<String, FavoriteTrack>();
     private final List<FavoriteTrack> favoritesList = new ArrayList<FavoriteTrack>();
     private volatile int favoritesVersion = 0;
-    private volatile String lastFavCheckArtist = null;
-    private volatile String lastFavCheckTitle = null;
-    private volatile int lastFavCheckVersion = -1;
-    private volatile boolean lastFavCheckResult = false;
+    private volatile FavCheckSnapshot lastFavCheck = null;
+
+    private record FavCheckSnapshot(int version, String artist, String title, boolean result) {
+    }
 
     public FavoritesManager() {
         this.load();
@@ -52,13 +52,20 @@ public class FavoritesManager {
                 this.favoritesList.clear();
                 if (list != null) {
                     for (FavoriteTrack track : list) {
+                        if (track == null) {
+                            continue;
+                        }
                         if (track.id == null || track.id.isEmpty()) {
                             track.id = FavoriteTrack.createId(track.artist, track.title);
+                        }
+                        if (track.id == null || track.id.isEmpty()) {
+                            continue;
                         }
                         this.favoritesMap.put(track.id, track);
                         this.favoritesList.add(track);
                     }
                 }
+                ++this.favoritesVersion;
             }
         }
         catch (Exception e) {
@@ -83,15 +90,13 @@ public class FavoritesManager {
         }
         int ver = this.favoritesVersion;
         String safeArtist = artist != null ? artist : "";
-        if (ver == this.lastFavCheckVersion && title.equals(this.lastFavCheckTitle) && safeArtist.equals(this.lastFavCheckArtist)) {
-            return this.lastFavCheckResult;
+        FavCheckSnapshot cached = this.lastFavCheck;
+        if (cached != null && ver == cached.version() && title.equals(cached.title()) && safeArtist.equals(cached.artist())) {
+            return cached.result();
         }
         String id = FavoriteTrack.createId(safeArtist, title);
-        boolean res = this.favoritesMap.containsKey(id);
-        this.lastFavCheckArtist = safeArtist;
-        this.lastFavCheckTitle = title;
-        this.lastFavCheckVersion = ver;
-        this.lastFavCheckResult = res;
+        boolean res = id != null && this.favoritesMap.containsKey(id);
+        this.lastFavCheck = new FavCheckSnapshot(ver, safeArtist, title, res);
         return res;
     }
 

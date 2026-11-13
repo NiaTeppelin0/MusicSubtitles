@@ -271,7 +271,7 @@ extends class_437 {
             context.method_51433(this.field_22793, nowTitle, infoX, dockY + 6, 0xFFF8FAFC, true);
             context.method_51433(this.field_22793, nowArtist, infoX, dockY + 17, 0xFF94A3B8, false);
             float prog = class_3532.method_15363(curState.getProgress(), 0.0f, 1.0f);
-            MusicHudRenderer.renderProgressBarWithPlayhead(context, infoX, dockY + 30, infoMaxW, 3, prog, 0xFF38BDF8, 0xFF10B981, nowMs);
+            MusicHudRenderer.renderProgressBarWithPlayhead(context, infoX, dockY + 30, infoMaxW, 3, prog, 255, 0x38BDF8, nowMs);
         } else {
             context.method_51433(this.field_22793, "\u041d\u0435\u0442 \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0433\u043e \u0442\u0440\u0435\u043a\u0430", infoX, dockY + 10, 0xFF94A3B8, false);
             MusicHudRenderer.renderRoundedRect(context, infoX, dockY + 26, infoMaxW, 3, 1, 0x441E293B);

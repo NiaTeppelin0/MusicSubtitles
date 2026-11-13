@@ -290,7 +290,7 @@ public class YandexMusicSettingsScreen extends class_437 {
 
     private void closeScreen() {
         if (this.field_22787 != null) {
-            if (!HudConfig.INSTANCE.initialSetupCompleted) {
+            if (!HudConfig.INSTANCE.initialSetupCompleted && !(this.parent instanceof InitialSetupScreen)) {
                 this.field_22787.method_1507((class_437)new InitialSetupScreen(this.parent));
             } else if (this.parent != null && !(this.parent instanceof YandexMusicSettingsScreen)) {
                 this.field_22787.method_1507(this.parent);

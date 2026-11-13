@@ -70,8 +70,8 @@ import org.slf4j.LoggerFactory;
 
 public class LyricsManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("MusicSubtitles");
-    private static final Pattern LRC_LINE_PATTERN = Pattern.compile("^\\[(\\d+):(\\d+(?:\\.\\d+)?)\\](.*)$");
-    private static final Pattern ENHANCED_WORD_PATTERN = Pattern.compile("<(\\d+):(\\d+(?:\\.\\d+)?)>(.*?)(?=<\\d+:\\d+(?:\\.\\d+)?>|$)");
+    private static final Pattern LRC_LINE_PATTERN = Pattern.compile("^\\s*((?:\\[\\d+:\\d+(?:[.,]\\d+)?\\])+)(.*)$");
+    private static final Pattern ENHANCED_WORD_PATTERN = Pattern.compile("<(\\d+):(\\d+(?:[.,]\\d+)?)>(.*?)(?=<\\d+:\\d+(?:[.,]\\d+)?>|$)");
     private static final Pattern OFFSET_PATTERN = Pattern.compile("^\\[offset:([+-]?\\d+)\\]", 2);
     private static final Pattern NOISE_PATTERN = Pattern.compile("(?i)\\s*[\\[\\(]?(?:official\\s*(?:music\\s*)?(?:video|audio|lyric\\s*video|visualizer|clip)|\u043f\u0440\u0435\u043c\u044c\u0435\u0440\u0430\\s*\u043a\u043b\u0438\u043f\u0430|\u043a\u043b\u0438\u043f|\u043b\u0438\u0440\u0438\u043a\\s*\u0432\u0438\u0434\u0435\u043e|slowed\\s*\\+?\\s*reverb|speed\\s*up|nightcore|sped\\s*up|mood\\s*video|remastered|deluxe|prod\\.?\\s+by|4k|hd|hq|live|acoustic|remix)[\\]\\)]?.*");
     private static final Pattern SPLIT_PATTERN = Pattern.compile("^(.*?)\\s+[-\u2014\u2013]\\s+(.*)$");
@@ -122,8 +122,8 @@ public class LyricsManager {
     private static final Pattern NON_ALNUM_PATTERN = Pattern.compile("[^\\p{L}\\p{N}\\s]");
     private static final Pattern INSTRUMENTAL_LINE_PATTERN = Pattern.compile("(?i)^\\[?(?:instrumental|\u0441\u043e\u043b\u043e|guitar\\s*solo|\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0430\u043b|\u043c\u0443\u0437\u044b\u043a\u0430|intro|outro|solo)\\]?$");
     private static final Pattern INVALID_FILENAME_PATTERN = Pattern.compile("[\\\\/:*?\"<>|]");
-    private static final Pattern ENHANCED_TAG_STRIP_PATTERN = Pattern.compile("<\\d+:\\d+(?:\\.\\d+)?>");
-    private static final Pattern LRC_TAG_STRIP_PATTERN = Pattern.compile("\\[\\d+:\\d+(?:\\.\\d+)?\\]");
+    private static final Pattern ENHANCED_TAG_STRIP_PATTERN = Pattern.compile("<\\d+:\\d+(?:[.,]\\d+)?>");
+    private static final Pattern LRC_TAG_STRIP_PATTERN = Pattern.compile("\\[(\\d+):(\\d+(?:[.,]\\d+)?)\\]");
     private static final Pattern NOISE_QUOTES_PATTERN = Pattern.compile("[\u25ba\u25c4\"'\u00ab\u00bb\u201c\u201d\u201e]");
     private static final Pattern CARMELL_PATTERN = Pattern.compile("(?i)carmell\\s*dansen");
     private static final Pattern FEAT_SUFFIX_PATTERN = Pattern.compile("(?i)\\s*(?:feat\\.?|ft\\.?|featuring)\\s+.*$");
@@ -1694,16 +1694,19 @@ public class LyricsManager {
             if (resp == null || fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject json = JsonParser.parseString(resp).getAsJsonObject();
-            if (json.has("result") && !json.get("result").isJsonNull()) {
-                JsonObject resObj = json.getAsJsonObject("result");
-                if (resObj.has("downloadUrl") && !resObj.get("downloadUrl").isJsonNull()) {
-                    String downloadUrl = resObj.get("downloadUrl").getAsString();
-                    String lrcContent = LyricsManager.httpGet(downloadUrl, Collections.emptyMap(), 4000);
-                    if (lrcContent != null && !lrcContent.isEmpty() && fetchId == this.currentFetchId.get()) {
-                        List<LyricLine> lines = this.parseLrc(lrcContent);
-                        if (!lines.isEmpty()) {
-                            return new FetchResult(lines, possibleMismatch, true);
+            JsonElement rootEl = JsonParser.parseString(resp);
+            if (rootEl != null && rootEl.isJsonObject()) {
+                JsonObject json = rootEl.getAsJsonObject();
+                if (json.has("result") && json.get("result").isJsonObject()) {
+                    JsonObject resObj = json.getAsJsonObject("result");
+                    if (resObj.has("downloadUrl") && resObj.get("downloadUrl").isJsonPrimitive()) {
+                        String downloadUrl = resObj.get("downloadUrl").getAsString();
+                        String lrcContent = LyricsManager.httpGet(downloadUrl, Collections.emptyMap(), 4000);
+                        if (lrcContent != null && !lrcContent.isEmpty() && fetchId == this.currentFetchId.get()) {
+                            List<LyricLine> lines = this.parseLrc(lrcContent);
+                            if (!lines.isEmpty()) {
+                                return new FetchResult(lines, possibleMismatch, true);
+                            }
                         }
                     }
                 }
@@ -1740,17 +1743,20 @@ public class LyricsManager {
             if (resp == null || fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject json = JsonParser.parseString(resp).getAsJsonObject();
-            if (json.has("result") && !json.get("result").isJsonNull()) {
-                JsonObject resObj = json.getAsJsonObject("result");
-                if (resObj.has("downloadUrl") && !resObj.get("downloadUrl").isJsonNull()) {
-                    String downloadUrl = resObj.get("downloadUrl").getAsString();
-                    String textContent = LyricsManager.httpGet(downloadUrl, Collections.emptyMap(), 4000);
-                    if (textContent != null && !textContent.isEmpty() && fetchId == this.currentFetchId.get()) {
-                        long targetDur = durationMs > 0L ? durationMs : 180000L;
-                        FetchResult pr = this.parsePlainLyrics(textContent, targetDur, fetchId);
-                        if (pr != null && pr.lines() != null && !pr.lines().isEmpty()) {
-                            return new FetchResult(pr.lines(), possibleMismatch, false);
+            JsonElement rootEl = JsonParser.parseString(resp);
+            if (rootEl != null && rootEl.isJsonObject()) {
+                JsonObject json = rootEl.getAsJsonObject();
+                if (json.has("result") && json.get("result").isJsonObject()) {
+                    JsonObject resObj = json.getAsJsonObject("result");
+                    if (resObj.has("downloadUrl") && resObj.get("downloadUrl").isJsonPrimitive()) {
+                        String downloadUrl = resObj.get("downloadUrl").getAsString();
+                        String textContent = LyricsManager.httpGet(downloadUrl, Collections.emptyMap(), 4000);
+                        if (textContent != null && !textContent.isEmpty() && fetchId == this.currentFetchId.get()) {
+                            long targetDur = durationMs > 0L ? durationMs : 180000L;
+                            FetchResult pr = this.parsePlainLyrics(textContent, targetDur, fetchId);
+                            if (pr != null && pr.lines() != null && !pr.lines().isEmpty()) {
+                                return new FetchResult(pr.lines(), possibleMismatch, false);
+                            }
                         }
                     }
                 }
@@ -1782,16 +1788,20 @@ public class LyricsManager {
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject searchJson = JsonParser.parseString((String)searchResp).getAsJsonObject();
-            if (!searchJson.has("result")) {
+            JsonElement searchEl = JsonParser.parseString((String)searchResp);
+            if (searchEl == null || !searchEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject searchJson = searchEl.getAsJsonObject();
+            if (!searchJson.has("result") || !searchJson.get("result").isJsonObject()) {
                 return null;
             }
             JsonObject resultObj = searchJson.getAsJsonObject("result");
-            if (!resultObj.has("tracks")) {
+            if (!resultObj.has("tracks") || !resultObj.get("tracks").isJsonObject()) {
                 return null;
             }
             JsonObject tracksObj = resultObj.getAsJsonObject("tracks");
-            if (!tracksObj.has("results")) {
+            if (!tracksObj.has("results") || !tracksObj.get("results").isJsonArray()) {
                 return null;
             }
             JsonArray results = tracksObj.getAsJsonArray("results");
@@ -1808,30 +1818,30 @@ public class LyricsManager {
                 JsonObject trackObj = elem.getAsJsonObject();
                 if (idx > 0) {
                     boolean hasLyrics = false;
-                    if (trackObj.has("lyricsInfo") && !trackObj.get("lyricsInfo").isJsonNull()) {
+                    if (trackObj.has("lyricsInfo") && trackObj.get("lyricsInfo").isJsonObject()) {
                         JsonObject li = trackObj.getAsJsonObject("lyricsInfo");
-                        if ((li.has("hasAvailableSyncLyrics") && li.get("hasAvailableSyncLyrics").getAsBoolean()) ||
-                            (li.has("hasAvailableTextLyrics") && li.get("hasAvailableTextLyrics").getAsBoolean())) {
+                        if ((li.has("hasAvailableSyncLyrics") && li.get("hasAvailableSyncLyrics").isJsonPrimitive() && li.get("hasAvailableSyncLyrics").getAsBoolean()) ||
+                            (li.has("hasAvailableTextLyrics") && li.get("hasAvailableTextLyrics").isJsonPrimitive() && li.get("hasAvailableTextLyrics").getAsBoolean())) {
                             hasLyrics = true;
                         }
                     }
-                    if (!hasLyrics && trackObj.has("lyricsAvailable") && trackObj.get("lyricsAvailable").getAsBoolean()) {
+                    if (!hasLyrics && trackObj.has("lyricsAvailable") && trackObj.get("lyricsAvailable").isJsonPrimitive() && trackObj.get("lyricsAvailable").getAsBoolean()) {
                         hasLyrics = true;
                     }
                     if (!hasLyrics) {
                         continue;
                     }
                 }
-                String foundTitle = trackObj.has("title") && !trackObj.get("title").isJsonNull() ? trackObj.get("title").getAsString() : "";
+                String foundTitle = trackObj.has("title") && trackObj.get("title").isJsonPrimitive() ? trackObj.get("title").getAsString() : "";
                 String foundArtist = "";
                 double bestArtistSim = 0.0;
                 StringBuilder allArtistsSb = new StringBuilder();
-                if (trackObj.has("artists") && !trackObj.get("artists").isJsonNull()) {
+                if (trackObj.has("artists") && trackObj.get("artists").isJsonArray()) {
                     JsonArray artistsArr = trackObj.getAsJsonArray("artists");
                     for (int aIdx = 0; aIdx < artistsArr.size(); ++aIdx) {
                         if (!artistsArr.get(aIdx).isJsonObject()) continue;
                         JsonObject artObj = artistsArr.get(aIdx).getAsJsonObject();
-                        if (artObj.has("name") && !artObj.get("name").isJsonNull()) {
+                        if (artObj.has("name") && artObj.get("name").isJsonPrimitive()) {
                             String aName = artObj.get("name").getAsString();
                             if (foundArtist.isEmpty()) {
                                 foundArtist = aName;
@@ -1853,7 +1863,7 @@ public class LyricsManager {
                 if (sim < 0.40) {
                     continue;
                 }
-                long trackDurationMs = trackObj.has("durationMs") ? trackObj.get("durationMs").getAsLong() : 0L;
+                long trackDurationMs = trackObj.has("durationMs") && trackObj.get("durationMs").isJsonPrimitive() && trackObj.getAsJsonPrimitive("durationMs").isNumber() ? trackObj.getAsJsonPrimitive("durationMs").getAsLong() : 0L;
                 long durDiffSec = durationSec > 20L && trackDurationMs > 20000L ? Math.abs(durationSec - trackDurationMs / 1000L) : 0L;
                 if (durationSec > 20L && trackDurationMs > 20000L && durDiffSec > 18L) {
                     continue;
@@ -1867,6 +1877,9 @@ public class LyricsManager {
                     continue;
                 }
                 boolean possibleMismatch = sim < 0.70 || (artistName != null && !artistName.isBlank() && bestArtistSim < 0.45 && durDiffSec > 4L);
+                if (!trackObj.has("id") || !trackObj.get("id").isJsonPrimitive()) {
+                    continue;
+                }
                 String trackId = trackObj.get("id").getAsString();
 
                 FetchResult lrcRes = this.fetchYandexLrcLyrics(trackId, foundArtist.isEmpty() ? artistName : foundArtist, foundTitle.isEmpty() ? trackName : foundTitle, fetchId, possibleMismatch);
@@ -1887,18 +1900,22 @@ public class LyricsManager {
                 if (fetchId != this.currentFetchId.get()) {
                     return null;
                 }
-                JsonObject supplementJson = JsonParser.parseString((String)supplementResp).getAsJsonObject();
-                if (!supplementJson.has("result")) {
+                JsonElement suppEl = JsonParser.parseString((String)supplementResp);
+                if (suppEl == null || !suppEl.isJsonObject()) {
+                    continue;
+                }
+                JsonObject supplementJson = suppEl.getAsJsonObject();
+                if (!supplementJson.has("result") || !supplementJson.get("result").isJsonObject()) {
                     continue;
                 }
                 JsonObject suppResult = supplementJson.getAsJsonObject("result");
-                if (suppResult.has("lyrics") && !suppResult.get("lyrics").isJsonNull()) {
+                if (suppResult.has("lyrics") && suppResult.get("lyrics").isJsonObject()) {
                     List<LyricLine> lines;
                     JsonObject lyrObj = suppResult.getAsJsonObject("lyrics");
-                    if (lyrObj.has("syncedLyrics") && !lyrObj.get("syncedLyrics").isJsonNull() && !(lines = this.parseLrc(lyrObj.get("syncedLyrics").getAsString())).isEmpty()) {
+                    if (lyrObj.has("syncedLyrics") && lyrObj.get("syncedLyrics").isJsonPrimitive() && !(lines = this.parseLrc(lyrObj.get("syncedLyrics").getAsString())).isEmpty()) {
                         return new FetchResult(lines, possibleMismatch, true);
                     }
-                    if (lyrObj.has("fullLyrics") && !lyrObj.get("fullLyrics").isJsonNull()) {
+                    if (lyrObj.has("fullLyrics") && lyrObj.get("fullLyrics").isJsonPrimitive()) {
                         long targetDur = durationSec > 0L ? durationSec * 1000L : (trackDurationMs > 0L ? trackDurationMs : 180000L);
                         FetchResult pr = this.parsePlainLyrics(lyrObj.get("fullLyrics").getAsString(), targetDur, fetchId);
                         if (pr != null && pr.lines() != null && !pr.lines().isEmpty()) {
@@ -1940,20 +1957,24 @@ public class LyricsManager {
             if (supplementResp == null || fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject supplementJson = JsonParser.parseString(supplementResp).getAsJsonObject();
-            if (!supplementJson.has("result")) {
+            JsonElement suppEl = JsonParser.parseString(supplementResp);
+            if (suppEl == null || !suppEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject supplementJson = suppEl.getAsJsonObject();
+            if (!supplementJson.has("result") || !supplementJson.get("result").isJsonObject()) {
                 return null;
             }
             JsonObject suppResult = supplementJson.getAsJsonObject("result");
-            if (suppResult.has("lyrics") && !suppResult.get("lyrics").isJsonNull()) {
+            if (suppResult.has("lyrics") && suppResult.get("lyrics").isJsonObject()) {
                 JsonObject lyrObj = suppResult.getAsJsonObject("lyrics");
-                if (lyrObj.has("syncedLyrics") && !lyrObj.get("syncedLyrics").isJsonNull()) {
+                if (lyrObj.has("syncedLyrics") && lyrObj.get("syncedLyrics").isJsonPrimitive()) {
                     List<LyricLine> lines = this.parseLrc(lyrObj.get("syncedLyrics").getAsString());
                     if (!lines.isEmpty()) {
                         return new FetchResult(lines, false, true);
                     }
                 }
-                if (lyrObj.has("fullLyrics") && !lyrObj.get("fullLyrics").isJsonNull()) {
+                if (lyrObj.has("fullLyrics") && lyrObj.get("fullLyrics").isJsonPrimitive()) {
                     long targetDur = durationSec > 0L ? durationSec * 1000L : 180000L;
                     FetchResult pr = this.parsePlainLyrics(lyrObj.get("fullLyrics").getAsString(), targetDur, fetchId);
                     if (pr != null && pr.lines() != null && !pr.lines().isEmpty()) {
@@ -1983,12 +2004,16 @@ public class LyricsManager {
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject searchJson = JsonParser.parseString((String)searchResp).getAsJsonObject();
-            if (!searchJson.has("result") || searchJson.get("result").isJsonNull()) {
+            JsonElement searchEl = JsonParser.parseString((String)searchResp);
+            if (searchEl == null || !searchEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject searchJson = searchEl.getAsJsonObject();
+            if (!searchJson.has("result") || !searchJson.get("result").isJsonObject()) {
                 return null;
             }
             JsonObject resObj = searchJson.getAsJsonObject("result");
-            if (!resObj.has("songs") || resObj.get("songs").isJsonNull()) {
+            if (!resObj.has("songs") || !resObj.get("songs").isJsonArray()) {
                 return null;
             }
             JsonArray songs = resObj.getAsJsonArray("songs");
@@ -2000,17 +2025,17 @@ public class LyricsManager {
             for (JsonElement se : songs) {
                 if (!se.isJsonObject()) continue;
                 JsonObject sObj = se.getAsJsonObject();
-                String name = sObj.has("name") && !sObj.get("name").isJsonNull() ? sObj.get("name").getAsString() : "";
+                String name = sObj.has("name") && sObj.get("name").isJsonPrimitive() ? sObj.get("name").getAsString() : "";
                 double tSim = LyricsManager.computeStringSimilarity(targetTitle, name);
                 if (tSim < 0.55) continue;
                 double aSim = 0.0;
                 StringBuilder artistBuilder = new StringBuilder();
-                if (sObj.has("artists") && !sObj.get("artists").isJsonNull()) {
+                if (sObj.has("artists") && sObj.get("artists").isJsonArray()) {
                     JsonArray artArr = sObj.getAsJsonArray("artists");
                     for (int i = 0; i < artArr.size(); ++i) {
                         if (!artArr.get(i).isJsonObject()) continue;
                         JsonObject aObj = artArr.get(i).getAsJsonObject();
-                        if (aObj.has("name") && !aObj.get("name").isJsonNull()) {
+                        if (aObj.has("name") && aObj.get("name").isJsonPrimitive()) {
                             String aName = aObj.get("name").getAsString();
                             if (artistBuilder.length() > 0) artistBuilder.append(" ");
                             artistBuilder.append(aName);
@@ -2024,7 +2049,7 @@ public class LyricsManager {
                     aSim = Math.max(aSim, LyricsManager.computeStringSimilarity(targetArtist, artistBuilder.toString()));
                 }
                 if (targetArtist != null && !targetArtist.isBlank() && aSim < 0.35) continue;
-                long songDurMs = sObj.has("duration") && !sObj.get("duration").isJsonNull() ? sObj.get("duration").getAsLong() : 0L;
+                long songDurMs = sObj.has("duration") && sObj.get("duration").isJsonPrimitive() && sObj.getAsJsonPrimitive("duration").isNumber() ? sObj.getAsJsonPrimitive("duration").getAsLong() : 0L;
                 if (durationSec > 20L && songDurMs > 20000L) {
                     long diffSec = Math.abs(durationSec - songDurMs / 1000L);
                     if (diffSec > 12L) continue;
@@ -2034,11 +2059,11 @@ public class LyricsManager {
                 bestScore = combined;
                 bestSong = sObj;
             }
-            if (bestSong == null || bestScore < 0.55) {
+            if (bestSong == null || bestScore < 0.55 || !bestSong.has("id") || !bestSong.get("id").isJsonPrimitive() || !bestSong.getAsJsonPrimitive("id").isNumber()) {
                 return null;
             }
             boolean possibleMismatch = bestScore < 0.75;
-            long songId = bestSong.get("id").getAsLong();
+            long songId = bestSong.getAsJsonPrimitive("id").getAsLong();
             String lyricUrl = "https://music.163.com/api/song/lyric?os=pc&id=" + songId + "&lv=-1&kv=-1&tv=-1";
             String lyricResp = LyricsManager.httpGet(lyricUrl, headers, 2500);
             if (lyricResp == null) {
@@ -2047,9 +2072,12 @@ public class LyricsManager {
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject lyricJson = JsonParser.parseString((String)lyricResp).getAsJsonObject();
-            if (lyricJson.has("lrc") && !lyricJson.get("lrc").isJsonNull() && (lrc = lyricJson.getAsJsonObject("lrc")).has("lyric") && !lrc.get("lyric").isJsonNull() && !(lines = this.parseLrc(lrc.get("lyric").getAsString())).isEmpty()) {
-                return new FetchResult(lines, possibleMismatch, true);
+            JsonElement lyricEl = JsonParser.parseString((String)lyricResp);
+            if (lyricEl != null && lyricEl.isJsonObject()) {
+                JsonObject lyricJson = lyricEl.getAsJsonObject();
+                if (lyricJson.has("lrc") && lyricJson.get("lrc").isJsonObject() && (lrc = lyricJson.getAsJsonObject("lrc")).has("lyric") && lrc.get("lyric").isJsonPrimitive() && !(lines = this.parseLrc(lrc.get("lyric").getAsString())).isEmpty()) {
+                    return new FetchResult(lines, possibleMismatch, true);
+                }
             }
         }
         catch (Exception exception) {
@@ -2101,11 +2129,15 @@ public class LyricsManager {
             if (resp == null || fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject obj = JsonParser.parseString((String)resp).getAsJsonObject();
-            if (obj.has("syncedLyrics") && !obj.get("syncedLyrics").isJsonNull() && !(lines = this.parseLrc(obj.get("syncedLyrics").getAsString())).isEmpty()) {
+            JsonElement el = JsonParser.parseString((String)resp);
+            if (el == null || !el.isJsonObject()) {
+                return null;
+            }
+            JsonObject obj = el.getAsJsonObject();
+            if (obj.has("syncedLyrics") && obj.get("syncedLyrics").isJsonPrimitive() && !(lines = this.parseLrc(obj.get("syncedLyrics").getAsString())).isEmpty()) {
                 return new LyricsConsensusEngine.Candidate("LRCLIB_GET", lines, null, true);
             }
-            if (obj.has("plainLyrics") && !obj.get("plainLyrics").isJsonNull() && !(plain = obj.get("plainLyrics").getAsString()).isBlank()) {
+            if (obj.has("plainLyrics") && obj.get("plainLyrics").isJsonPrimitive() && !(plain = obj.get("plainLyrics").getAsString()).isBlank()) {
                 return new LyricsConsensusEngine.Candidate("LRCLIB_PLAIN", null, plain, false);
             }
         }
@@ -2127,7 +2159,11 @@ public class LyricsManager {
             if (resp == null || fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonArray arr = JsonParser.parseString((String)resp).getAsJsonArray();
+            JsonElement el = JsonParser.parseString((String)resp);
+            if (el == null || !el.isJsonArray()) {
+                return null;
+            }
+            JsonArray arr = el.getAsJsonArray();
             if (arr.isEmpty()) {
                 return null;
             }
@@ -2136,7 +2172,7 @@ public class LyricsManager {
             for (JsonElement elem : arr) {
                 int score;
                 JsonObject obj;
-                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("plainLyrics") || obj.get("plainLyrics").isJsonNull() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= bestPlainScore) continue;
+                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("plainLyrics") || !obj.get("plainLyrics").isJsonPrimitive() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= bestPlainScore) continue;
                 bestPlainScore = score;
                 bestPlainObj = obj;
             }
@@ -2165,8 +2201,12 @@ public class LyricsManager {
             if (resp == null || fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject json = JsonParser.parseString((String)resp).getAsJsonObject();
-            if (json.has("lyrics") && !json.get("lyrics").isJsonNull() && !(lyrics = json.get("lyrics").getAsString()).isBlank()) {
+            JsonElement el = JsonParser.parseString((String)resp);
+            if (el == null || !el.isJsonObject()) {
+                return null;
+            }
+            JsonObject json = el.getAsJsonObject();
+            if (json.has("lyrics") && json.get("lyrics").isJsonPrimitive() && !(lyrics = json.get("lyrics").getAsString()).isBlank()) {
                 return new LyricsConsensusEngine.Candidate("OVH", null, lyrics, false);
             }
         }
@@ -2193,8 +2233,12 @@ public class LyricsManager {
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject json = JsonParser.parseString((String)resp).getAsJsonObject();
-            if (json.has("lyrics") && !json.get("lyrics").isJsonNull()) {
+            JsonElement el = JsonParser.parseString((String)resp);
+            if (el == null || !el.isJsonObject()) {
+                return null;
+            }
+            JsonObject json = el.getAsJsonObject();
+            if (json.has("lyrics") && json.get("lyrics").isJsonPrimitive()) {
                 long dur = durationSec > 0L ? durationSec * 1000L : 180000L;
                 return this.parsePlainLyrics(json.get("lyrics").getAsString(), dur, fetchId);
             }
@@ -2225,11 +2269,15 @@ public class LyricsManager {
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonObject obj = JsonParser.parseString((String)resp).getAsJsonObject();
-            if (obj.has("syncedLyrics") && !obj.get("syncedLyrics").isJsonNull() && !(lines = this.parseLrc(obj.get("syncedLyrics").getAsString())).isEmpty()) {
+            JsonElement el = JsonParser.parseString((String)resp);
+            if (el == null || !el.isJsonObject()) {
+                return null;
+            }
+            JsonObject obj = el.getAsJsonObject();
+            if (obj.has("syncedLyrics") && obj.get("syncedLyrics").isJsonPrimitive() && !(lines = this.parseLrc(obj.get("syncedLyrics").getAsString())).isEmpty()) {
                 return new FetchResult(lines, false, true);
             }
-            if (obj.has("plainLyrics") && !obj.get("plainLyrics").isJsonNull()) {
+            if (obj.has("plainLyrics") && obj.get("plainLyrics").isJsonPrimitive()) {
                 long targetDurationMs = durationSec > 0L ? durationSec * 1000L : 180000L;
                 return this.parsePlainLyrics(obj.get("plainLyrics").getAsString(), targetDurationMs, fetchId);
             }
@@ -2255,7 +2303,11 @@ public class LyricsManager {
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonArray arr = JsonParser.parseString((String)resp).getAsJsonArray();
+            JsonElement el = JsonParser.parseString((String)resp);
+            if (el == null || !el.isJsonArray()) {
+                return null;
+            }
+            JsonArray arr = el.getAsJsonArray();
             if (arr.isEmpty()) {
                 return null;
             }
@@ -2264,7 +2316,7 @@ public class LyricsManager {
             for (JsonElement elem : arr) {
                 int score;
                 JsonObject obj;
-                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("syncedLyrics") || obj.get("syncedLyrics").isJsonNull() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= bestSyncedScore) continue;
+                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("syncedLyrics") || !obj.get("syncedLyrics").isJsonPrimitive() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= bestSyncedScore) continue;
                 bestSyncedScore = score;
                 bestSyncedObj = obj;
             }
@@ -2293,7 +2345,11 @@ public class LyricsManager {
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            JsonArray arr = JsonParser.parseString((String)resp).getAsJsonArray();
+            JsonElement el = JsonParser.parseString((String)resp);
+            if (el == null || !el.isJsonArray()) {
+                return null;
+            }
+            JsonArray arr = el.getAsJsonArray();
             if (arr.isEmpty()) {
                 return null;
             }
@@ -2302,7 +2358,7 @@ public class LyricsManager {
             for (JsonElement elem : arr) {
                 int score;
                 JsonObject obj;
-                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("plainLyrics") || obj.get("plainLyrics").isJsonNull() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= bestPlainScore) continue;
+                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("plainLyrics") || !obj.get("plainLyrics").isJsonPrimitive() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= bestPlainScore) continue;
                 bestPlainScore = score;
                 bestPlainObj = obj;
             }
@@ -2319,8 +2375,8 @@ public class LyricsManager {
 
     private int calculateMatchScore(JsonObject obj, long durationSec, String targetTitle, String targetArtist) {
         long itemDurSec;
-        String itemTrack = obj.has("trackName") && !obj.get("trackName").isJsonNull() ? obj.get("trackName").getAsString() : "";
-        String itemArtist = obj.has("artistName") && !obj.get("artistName").isJsonNull() ? obj.get("artistName").getAsString() : "";
+        String itemTrack = obj.has("trackName") && obj.get("trackName").isJsonPrimitive() ? obj.get("trackName").getAsString() : "";
+        String itemArtist = obj.has("artistName") && obj.get("artistName").isJsonPrimitive() ? obj.get("artistName").getAsString() : "";
         double titleSim = LyricsManager.computeStringSimilarity(targetTitle, itemTrack);
         double artistSim = LyricsManager.computeStringSimilarity(targetArtist, itemArtist);
         if (titleSim < 0.35) {
@@ -2335,7 +2391,7 @@ public class LyricsManager {
         } else if (!targetArtist.isEmpty()) {
             score -= 100;
         }
-        long l = itemDurSec = obj.has("duration") && !obj.get("duration").isJsonNull() ? (long)obj.get("duration").getAsDouble() : 0L;
+        itemDurSec = obj.has("duration") && obj.get("duration").isJsonPrimitive() && obj.getAsJsonPrimitive("duration").isNumber() ? (long)obj.getAsJsonPrimitive("duration").getAsDouble() : 0L;
         if (durationSec > 0L && itemDurSec > 0L) {
             long diff = Math.abs(itemDurSec - durationSec);
             if (diff <= 2L) {
@@ -2458,8 +2514,9 @@ public class LyricsManager {
         if (lrcContent == null || lrcContent.isEmpty()) {
             return Collections.emptyList();
         }
+        String normalizedLrc = lrcContent.indexOf('\ufeff') >= 0 ? lrcContent.replace("\ufeff", "") : lrcContent;
         ArrayList<RawLine> rawList = new ArrayList<RawLine>();
-        String[] lines = LINE_SPLIT_PATTERN.split(lrcContent);
+        String[] lines = LINE_SPLIT_PATTERN.split(normalizedLrc);
         long offsetMs = 0L;
         for (String raw : lines) {
             Matcher offMatcher = OFFSET_PATTERN.matcher(raw);
@@ -2472,13 +2529,17 @@ public class LyricsManager {
             }
         }
         for (String raw : lines) {
-            Matcher matcher = LRC_LINE_PATTERN.matcher(raw);
-            if (!matcher.find()) continue;
-            long min = Long.parseLong(matcher.group(1));
-            double sec = Double.parseDouble(matcher.group(2));
-            long timeMs = Math.max(0L, min * 60000L + (long)(sec * 1000.0) + offsetMs);
-            String text = matcher.group(3).trim();
-            rawList.add(new RawLine(timeMs, text));
+            Matcher lineMatcher = LRC_LINE_PATTERN.matcher(raw);
+            if (!lineMatcher.find()) continue;
+            String tagsPart = lineMatcher.group(1);
+            String text = lineMatcher.group(2).trim();
+            Matcher tsMatcher = LRC_TAG_STRIP_PATTERN.matcher(tagsPart);
+            while (tsMatcher.find()) {
+                long min = Long.parseLong(tsMatcher.group(1));
+                double sec = Double.parseDouble(tsMatcher.group(2).replace(',', '.'));
+                long timeMs = Math.max(0L, min * 60000L + Math.round(sec * 1000.0) + offsetMs);
+                rawList.add(new RawLine(timeMs, text));
+            }
         }
         if (rawList.isEmpty()) {
             return Collections.emptyList();
@@ -2525,8 +2586,8 @@ public class LyricsManager {
                 long trailingTagTime = -1L;
                 while (tm.find()) {
                     long tMin = Long.parseLong(tm.group(1));
-                    double tSec = Double.parseDouble(tm.group(2));
-                    trailingTagTime = Math.max(0L, tMin * 60000L + (long)(tSec * 1000.0) + offsetMs);
+                    double tSec = Double.parseDouble(tm.group(2).replace(',', '.'));
+                    trailingTagTime = Math.max(0L, tMin * 60000L + Math.round(tSec * 1000.0) + offsetMs);
                 }
                 if (trailingTagTime > startMs) {
                     endMs = Math.max(startMs + 100L, trailingTagTime);
@@ -2679,8 +2740,8 @@ public class LyricsManager {
         int textOffset = 0;
         while (matcher.find()) {
             long min = Long.parseLong(matcher.group(1));
-            double sec = Double.parseDouble(matcher.group(2));
-            long wordTime = Math.max(0L, min * 60000L + (long)(sec * 1000.0) + offsetMs);
+            double sec = Double.parseDouble(matcher.group(2).replace(',', '.'));
+            long wordTime = Math.max(0L, min * 60000L + Math.round(sec * 1000.0) + offsetMs);
             String wordText = MULTI_SPACE_PATTERN.matcher(
                 matcher.group(3)
                     .replace("\\n", " ")

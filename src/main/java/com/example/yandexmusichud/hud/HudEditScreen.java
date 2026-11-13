@@ -890,9 +890,9 @@ extends class_437 {
                 }).setOnRelease(HudConfig::save);
                 this.method_37063(sSubScale);
                 this.registerHelp(sSubScale.method_46426(), sSubScale.method_46427(), sSubScale.method_25368(), sSubScale.method_25364(), "Размер текста", "Масштаб шрифта субтитров от 0.5x до 3.0x.", "1.0x - 1.2x для лёгкого чтения.");
-                double subDistNorm = ((double)HudConfig.INSTANCE.subtitlesDistance - 4.0) / 8.0;
-                ModernSliderWidget sDist = new ModernSliderWidget(contentX + colW + 4, contentY + 89, colW, 16, "Дальность: ", Math.max(0.0, Math.min(1.0, subDistNorm)), val -> String.format("%.1f бл.", 4.0 + val * 8.0), val -> {
-                    HudConfig.INSTANCE.subtitlesDistance = (float)(4.0 + val * 8.0);
+                double subDistNorm = ((double)HudConfig.INSTANCE.subtitlesDistance - 2.0) / 10.0;
+                ModernSliderWidget sDist = new ModernSliderWidget(contentX + colW + 4, contentY + 89, colW, 16, "Дальность: ", Math.max(0.0, Math.min(1.0, subDistNorm)), val -> String.format("%.1f бл.", 2.0 + val * 10.0), val -> {
+                    HudConfig.INSTANCE.subtitlesDistance = (float)(2.0 + val * 10.0);
                 }).setOnRelease(HudConfig::save);
                 this.method_37063(sDist);
                 this.registerHelp(sDist.method_46426(), sDist.method_46427(), sDist.method_25368(), sDist.method_25364(), "Дистанция 3D", "Расстояние от глаз игрока до субтитров.", "4.5 - 5.5 блоков не мешают обзору.");
@@ -923,9 +923,9 @@ extends class_437 {
                 }).setOnRelease(HudConfig::save);
                 this.method_37063(sSubScale);
                 this.registerHelp(sSubScale.method_46426(), sSubScale.method_46427(), sSubScale.method_25368(), sSubScale.method_25364(), "Размер текста", "Масштаб 2D-субтитров на экране.", "1.0x - 1.2x комфортно для глаз.");
-                double subDistNorm = ((double)HudConfig.INSTANCE.subtitlesDistance - 4.0) / 8.0;
-                ModernSliderWidget sDist = new ModernSliderWidget(contentX, contentY + 108, fullW, 16, "Дальность 3D: ", Math.max(0.0, Math.min(1.0, subDistNorm)), val -> String.format("%.1f бл.", 4.0 + val * 8.0), val -> {
-                    HudConfig.INSTANCE.subtitlesDistance = (float)(4.0 + val * 8.0);
+                double subDistNorm = ((double)HudConfig.INSTANCE.subtitlesDistance - 2.0) / 10.0;
+                ModernSliderWidget sDist = new ModernSliderWidget(contentX, contentY + 108, fullW, 16, "Дальность 3D: ", Math.max(0.0, Math.min(1.0, subDistNorm)), val -> String.format("%.1f бл.", 2.0 + val * 10.0), val -> {
+                    HudConfig.INSTANCE.subtitlesDistance = (float)(2.0 + val * 10.0);
                 }).setOnRelease(HudConfig::save);
                 this.method_37063(sDist);
                 this.registerHelp(sDist.method_46426(), sDist.method_46427(), sDist.method_25368(), sDist.method_25364(), "Дистанция 3D", "Расстояние от глаз игрока до субтитров.", "4.5 - 5.5 блоков не закрывают обзор.");
@@ -938,7 +938,7 @@ extends class_437 {
             this.method_37063(sSync);
             this.registerHelp(sSync.method_46426(), sSync.method_46427(), sSync.method_25368(), sSync.method_25364(), "Синхронизация", "Сдвиг времени субтитров от -4 до +4 секунд.", "Для Bluetooth-наушников поставьте +0.5 сек.");
             ModernButtonWidget bM = new ModernButtonWidget(contentX + syncSliderW + 4, contentY + 127, 28, 16, (class_2561)class_2561.method_43470("-0.5"), b -> {
-                HudConfig.INSTANCE.subtitlesOffsetMs -= 500;
+                HudConfig.INSTANCE.subtitlesOffsetMs = Math.max(-4000, HudConfig.INSTANCE.subtitlesOffsetMs - 500);
                 HudConfig.save();
                 this.buildTabWidgets();
             });
@@ -952,7 +952,7 @@ extends class_437 {
             this.method_37063(bZ);
             this.registerHelp(bZ.method_46426(), bZ.method_46427(), bZ.method_25368(), bZ.method_25364(), "Сброс сдвига", "Возвращает сдвиг времени на 0 секунд.", "Стандарт для колонок и проводных наушников.");
             ModernButtonWidget bP = new ModernButtonWidget(contentX + syncSliderW + 62, contentY + 127, 32, 16, (class_2561)class_2561.method_43470("+0.5"), b -> {
-                HudConfig.INSTANCE.subtitlesOffsetMs += 500;
+                HudConfig.INSTANCE.subtitlesOffsetMs = Math.min(4000, HudConfig.INSTANCE.subtitlesOffsetMs + 500);
                 HudConfig.save();
                 this.buildTabWidgets();
             });
@@ -1486,6 +1486,11 @@ extends class_437 {
                 }
                 if (this.currentTab == 3) {
                     this.renderSessionStatsCard(context, curPanelX + 8, curPanelY + 24, 100, this.panelHeight - 32, isPlaying, nowMs);
+                    if (this.panelHeight >= 210) {
+                        int rightCardX = curPanelX + 8 + 100 + 6;
+                        int rightCardW = this.panelWidth - 16 - 100 - 6;
+                        this.renderNametagBadgePreview(context, rightCardX, curPanelY + 24 + 168, rightCardW);
+                    }
                 }
             }
         } else {
@@ -1527,10 +1532,9 @@ extends class_437 {
             if (this.currentTab == 3) {
                 this.renderSessionStatsCard(context, curPanelX + 10, curPanelY + 46, 120, this.panelHeight - 56, isPlaying, nowMs);
                 if (this.panelHeight >= 220) {
-                    int contentX = curPanelX + (this.dockSide != 0 ? 8 : 10);
-                    int rightCardX = contentX + 120 + 6;
-                    int rightCardW = (this.panelWidth - (this.dockSide != 0 ? 16 : 20)) - 120 - 6;
-                    this.renderNametagBadgePreview(context, rightCardX, curPanelY + (this.dockSide != 0 ? 24 : 46) + 165, rightCardW);
+                    int rightCardX = curPanelX + 10 + 120 + 6;
+                    int rightCardW = this.panelWidth - 20 - 120 - 6;
+                    this.renderNametagBadgePreview(context, rightCardX, curPanelY + 46 + 165, rightCardW);
                 }
             }
         }
@@ -2556,7 +2560,7 @@ extends class_437 {
                 return true;
             }
         }
-        if (this.currentTab == 2 && this.paletteColorWheel != null && this.paletteColorWheel.mouseClicked(mx, my)) {
+        if (this.currentTab == 2 && this.paletteColorWheel != null && (this.dockSide == 0 || this.flyoutOpen) && this.paletteColorWheel.mouseClicked(mx, my)) {
             return true;
         }
         if (mx >= this.hudX && mx <= this.hudX + this.hudWidth && my >= this.hudY && my <= this.hudY + this.hudHeight) {
@@ -2627,7 +2631,7 @@ extends class_437 {
                 return true;
             }
         }
-        if (this.currentTab == 2 && this.paletteColorWheel != null && this.paletteColorWheel.mouseDragged(mx, my)) {
+        if (this.currentTab == 2 && this.paletteColorWheel != null && (this.dockSide == 0 || this.flyoutOpen) && this.paletteColorWheel.mouseDragged(mx, my)) {
             return true;
         }
         if (this.dragging) {
