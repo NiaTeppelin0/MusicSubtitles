@@ -101,7 +101,7 @@ public class SubtitleBubble {
             }
             return 1.0f;
         }
-        switch (anim.toUpperCase()) {
+        switch (anim.toUpperCase(java.util.Locale.ROOT)) {
             case "ELASTIC_POP": {
                 if (age < 450L) {
                     float t = (float)age / 450.0f;

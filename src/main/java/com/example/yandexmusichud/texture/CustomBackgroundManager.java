@@ -16,6 +16,10 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileAttribute;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.imageio.ImageIO;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.class_1011;
@@ -32,12 +36,19 @@ public class CustomBackgroundManager {
     public static final CustomBackgroundManager INSTANCE = new CustomBackgroundManager();
     private final List<String> validBackgrounds = new ArrayList<String>();
     private final List<InvalidFileEntry> invalidFiles = new ArrayList<InvalidFileEntry>();
-    private class_2960 currentTextureId = null;
-    private String loadedFileName = "";
-    private String failedFileName = "";
-    private long failedFileCheckTime = 0L;
-    private int loadedCornerRadius = -1;
-    private int loadedBaseHeight = -1;
+    private final ExecutorService loader = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "MusicSubtitles-CustomBgLoader");
+        t.setDaemon(true);
+        return t;
+    });
+    private final AtomicInteger loadGeneration = new AtomicInteger(0);
+    private volatile class_2960 currentTextureId = null;
+    private volatile String loadedFileName = "";
+    private volatile String loadingRequestKey = "";
+    private volatile String failedFileName = "";
+    private volatile long failedFileCheckTime = 0L;
+    private volatile int loadedCornerRadius = -1;
+    private volatile int loadedBaseHeight = -1;
     private long lastScanTime = 0L;
     private boolean alertDismissed = false;
 
@@ -99,9 +110,10 @@ public class CustomBackgroundManager {
         }
         for (File f : files) {
             boolean isKnownImage;
-            String name;
-            if (f.isDirectory() || (name = f.getName()).equalsIgnoreCase("README_\u0412\u0410\u0416\u041d\u041e_\u0422\u041e\u041b\u042c\u041a\u041e_PNG.txt") || name.equalsIgnoreCase("README.txt") || name.toLowerCase().endsWith(".txt") || name.toLowerCase().endsWith(".md")) continue;
-            String lower = name.toLowerCase();
+            if (f.isDirectory()) continue;
+            String name = f.getName();
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (name.equalsIgnoreCase("README_\u0412\u0410\u0416\u041d\u041e_\u0422\u041e\u041b\u042c\u041a\u041e_PNG.txt") || name.equalsIgnoreCase("README.txt") || lower.endsWith(".txt") || lower.endsWith(".md")) continue;
             byte[] header = new byte[16];
             int readBytes = 0;
             try (FileInputStream fis2 = new FileInputStream(f);){
@@ -165,10 +177,27 @@ public class CustomBackgroundManager {
         com.example.yandexmusichud.favorites.FavoritesManager.openFolderSafely(BACKGROUNDS_DIR);
     }
 
+    private static Path resolveSafeBackgroundPath(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return null;
+        }
+        try {
+            Path base = BACKGROUNDS_DIR.toAbsolutePath().normalize();
+            Path resolved = base.resolve(fileName).normalize();
+            if (!resolved.startsWith(base) || resolved.equals(base)) {
+                return null;
+            }
+            return resolved;
+        }
+        catch (Exception e) {
+            return null;
+        }
+    }
+
     public boolean autoConvertFile(String fileName) {
         this.ensureDirectoryExists();
-        Path p = BACKGROUNDS_DIR.resolve(fileName);
-        if (!Files.exists(p, new LinkOption[0])) {
+        Path p = CustomBackgroundManager.resolveSafeBackgroundPath(fileName);
+        if (p == null || !Files.exists(p, new LinkOption[0])) {
             return false;
         }
         try {
@@ -205,98 +234,151 @@ public class CustomBackgroundManager {
     public class_2960 getBackgroundTexture() {
         String configuredFile = HudConfig.INSTANCE.customBackgroundFile;
         if (configuredFile == null || configuredFile.trim().isEmpty()) {
-            this.unload();
+            if (this.currentTextureId != null || !this.loadedFileName.isEmpty() || !this.loadingRequestKey.isEmpty()) {
+                this.unload();
+            }
             return null;
         }
-        int curRadius = HudConfig.INSTANCE.cornerRadius;
+        int curRadius = class_3532.method_15340((int)HudConfig.INSTANCE.cornerRadius, (int)0, (int)20);
         int curBaseH = HudConfig.INSTANCE.getHudBaseHeight();
         if (configuredFile.equals(this.failedFileName) && System.currentTimeMillis() - this.failedFileCheckTime < 2500L) {
             return null;
         }
         if (!configuredFile.equals(this.loadedFileName) || curRadius != this.loadedCornerRadius || curBaseH != this.loadedBaseHeight) {
-            this.loadBackground(configuredFile);
+            this.loadBackground(configuredFile, curRadius, curBaseH);
         }
         return this.currentTextureId;
     }
 
     public void loadBackground(String fileName) {
-        this.ensureDirectoryExists();
-        Path filePath = BACKGROUNDS_DIR.resolve(fileName);
-        if (!Files.exists(filePath, new LinkOption[0])) {
-            this.failedFileName = fileName;
-            this.failedFileCheckTime = System.currentTimeMillis();
-            this.unload();
+        int curRadius = class_3532.method_15340((int)HudConfig.INSTANCE.cornerRadius, (int)0, (int)20);
+        int curBaseH = HudConfig.INSTANCE.getHudBaseHeight();
+        this.loadBackground(fileName, curRadius, curBaseH);
+    }
+
+    private void loadBackground(String fileName, int r, int baseH) {
+        String reqKey = fileName + "|" + r + "|" + baseH;
+        if (reqKey.equals(this.loadingRequestKey)) {
             return;
         }
-        class_1011 image = null;
-        try (FileInputStream in2 = new FileInputStream(filePath.toFile());){
-            image = class_1011.method_4309((InputStream)in2);
-        }
-        catch (Exception in2) {
+        this.loadingRequestKey = reqKey;
+        int gen = this.loadGeneration.incrementAndGet();
+        this.loader.submit(() -> {
+            if (gen != this.loadGeneration.get()) {
+                return;
+            }
+            this.ensureDirectoryExists();
+            Path filePath = CustomBackgroundManager.resolveSafeBackgroundPath(fileName);
+            if (filePath == null || !Files.exists(filePath, new LinkOption[0])) {
+                this.failedFileName = fileName;
+                this.failedFileCheckTime = System.currentTimeMillis();
+                if (reqKey.equals(this.loadingRequestKey)) {
+                    this.loadingRequestKey = "";
+                }
+                this.unload();
+                return;
+            }
+            class_1011 image = null;
+            try (FileInputStream in2 = new FileInputStream(filePath.toFile());){
+                image = class_1011.method_4309((InputStream)in2);
+            }
+            catch (Exception in2) {
 
-        }
-        if (image == null) {
-            try {
-                BufferedImage bimg = ImageIO.read(filePath.toFile());
-                if (bimg != null) {
-                    image = new class_1011(bimg.getWidth(), bimg.getHeight(), false);
-                    for (int y = 0; y < bimg.getHeight(); ++y) {
-                        for (int x = 0; x < bimg.getWidth(); ++x) {
-                            int argb = bimg.getRGB(x, y);
-                            int a = argb >> 24 & 0xFF;
-                            int r = argb >> 16 & 0xFF;
-                            int g = argb >> 8 & 0xFF;
-                            int b = argb & 0xFF;
-                            image.method_61941(x, y, a << 24 | r << 16 | g << 8 | b);
+            }
+            if (image == null) {
+                try {
+                    BufferedImage bimg = ImageIO.read(filePath.toFile());
+                    if (bimg != null) {
+                        image = new class_1011(bimg.getWidth(), bimg.getHeight(), false);
+                        for (int y = 0; y < bimg.getHeight(); ++y) {
+                            for (int x = 0; x < bimg.getWidth(); ++x) {
+                                int argb = bimg.getRGB(x, y);
+                                int a = argb >> 24 & 0xFF;
+                                int red = argb >> 16 & 0xFF;
+                                int g = argb >> 8 & 0xFF;
+                                int b = argb & 0xFF;
+                                image.method_61941(x, y, a << 24 | red << 16 | g << 8 | b);
+                            }
                         }
                     }
                 }
-            }
-            catch (Exception bimg) {
+                catch (Exception bimg) {
 
-            }
-        }
-        if (image == null) {
-            this.failedFileName = fileName;
-            this.failedFileCheckTime = System.currentTimeMillis();
-            this.unload();
-            return;
-        }
-        int baseH = HudConfig.INSTANCE.getHudBaseHeight();
-        int r = class_3532.method_15340((int)HudConfig.INSTANCE.cornerRadius, (int)0, (int)20);
-        if (r > 0 && baseH > 0) {
-            int pxRadius = (int)((float)r * ((float)image.method_4323() / (float)baseH));
-            CoverTextureManager.roundImageCorners(image, pxRadius);
-        }
-        class_1011 finalImage = image;
-        Runnable bindAction = () -> {
-            try {
-                if (this.currentTextureId != null) {
-                    class_310.method_1551().method_1531().method_4615(DYNAMIC_BG_ID);
                 }
-                class_1043 texture = new class_1043(() -> "custom_background", finalImage);
-                class_310.method_1551().method_1531().method_4616(DYNAMIC_BG_ID, (class_1044)texture);
-                this.currentTextureId = DYNAMIC_BG_ID;
-                this.loadedFileName = fileName;
-                this.failedFileName = "";
-                this.loadedCornerRadius = r;
-                this.loadedBaseHeight = baseH;
             }
-            catch (Exception e) {
+            if (image == null) {
+                this.failedFileName = fileName;
+                this.failedFileCheckTime = System.currentTimeMillis();
+                if (reqKey.equals(this.loadingRequestKey)) {
+                    this.loadingRequestKey = "";
+                }
                 this.unload();
+                return;
             }
-        };
-        if (RenderSystem.isOnRenderThread()) {
-            bindAction.run();
-        } else {
-            class_310.method_1551().execute(bindAction);
-        }
+            if (gen != this.loadGeneration.get()) {
+                image.close();
+                return;
+            }
+            if (r > 0 && baseH > 0) {
+                int pxRadius = (int)((float)r * ((float)image.method_4323() / (float)baseH));
+                CoverTextureManager.roundImageCorners(image, pxRadius);
+            }
+            if (gen != this.loadGeneration.get()) {
+                image.close();
+                return;
+            }
+            class_1011 finalImage = image;
+            Runnable bindAction = () -> {
+                class_1043 texture = null;
+                try {
+                    if (gen != this.loadGeneration.get()) {
+                        finalImage.close();
+                        return;
+                    }
+                    if (this.currentTextureId != null) {
+                        class_310.method_1551().method_1531().method_4615(DYNAMIC_BG_ID);
+                    }
+                    texture = new class_1043(() -> "custom_background", finalImage);
+                    class_310.method_1551().method_1531().method_4616(DYNAMIC_BG_ID, (class_1044)texture);
+                    this.currentTextureId = DYNAMIC_BG_ID;
+                    this.loadedFileName = fileName;
+                    this.failedFileName = "";
+                    this.loadedCornerRadius = r;
+                    this.loadedBaseHeight = baseH;
+                    if (reqKey.equals(this.loadingRequestKey)) {
+                        this.loadingRequestKey = "";
+                    }
+                }
+                catch (Exception e) {
+                    if (texture != null) {
+                        texture.close();
+                    } else {
+                        finalImage.close();
+                    }
+                    if (reqKey.equals(this.loadingRequestKey)) {
+                        this.loadingRequestKey = "";
+                    }
+                    this.unload();
+                }
+            };
+            class_310 mc = class_310.method_1551();
+            if (mc == null) {
+                finalImage.close();
+                return;
+            }
+            if (RenderSystem.isOnRenderThread()) {
+                bindAction.run();
+            } else {
+                mc.execute(bindAction);
+            }
+        });
     }
 
     public void reload() {
         this.failedFileName = "";
         this.failedFileCheckTime = 0L;
         this.loadedFileName = "";
+        this.loadingRequestKey = "";
         String configuredFile = HudConfig.INSTANCE.customBackgroundFile;
         if (configuredFile != null && !configuredFile.isEmpty()) {
             this.loadBackground(configuredFile);
@@ -306,18 +388,35 @@ public class CustomBackgroundManager {
     }
 
     public void unload() {
+        this.loadGeneration.incrementAndGet();
+        this.loadingRequestKey = "";
         Runnable unbindAction = () -> {
             if (this.currentTextureId != null) {
                 class_310.method_1551().method_1531().method_4615(DYNAMIC_BG_ID);
                 this.currentTextureId = null;
             }
             this.loadedFileName = "";
+            this.loadedCornerRadius = -1;
+            this.loadedBaseHeight = -1;
         };
         if (RenderSystem.isOnRenderThread()) {
             unbindAction.run();
         } else {
-            class_310.method_1551().execute(unbindAction);
+            class_310 mc = class_310.method_1551();
+            if (mc != null) {
+                mc.execute(unbindAction);
+            } else {
+                this.currentTextureId = null;
+                this.loadedFileName = "";
+                this.loadedCornerRadius = -1;
+                this.loadedBaseHeight = -1;
+            }
         }
+    }
+
+    public void shutdown() {
+        this.unload();
+        this.loader.shutdownNow();
     }
 
     public record InvalidFileEntry(String fileName, String reason, boolean canAutoConvert) {

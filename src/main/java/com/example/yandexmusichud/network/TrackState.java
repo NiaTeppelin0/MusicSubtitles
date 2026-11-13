@@ -2,11 +2,15 @@ package com.example.yandexmusichud.network;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public record TrackState(boolean isActive, String title, String artist, String album, String status, long positionMs, long durationMs, String coverHash, long receivedAtMs, String platform, String platformName, String playUrl, float playbackSpeed, String directUrl, String coverUrl) {
     public static final TrackState INACTIVE = new TrackState(false, "", "", "", "stopped", 0L, 0L, null, 0L, "music", "\u041c\u0443\u0437\u044b\u043a\u0430", "", 1.0f, null, null);
     private static volatile long lastProcessCheckTime = 0L;
     private static volatile boolean cachedSpotifyRunning = false;
+    private static final AtomicBoolean processCheckInFlight = new AtomicBoolean(false);
 
     public TrackState(boolean isActive, String title, String artist, String album, String status, long positionMs, long durationMs, String coverHash, long receivedAtMs, String platform, String platformName, String playUrl, float playbackSpeed) {
         this(isActive, title, artist, album, status, positionMs, durationMs, coverHash, receivedAtMs, platform, platformName, playUrl, playbackSpeed, null, null);
@@ -29,7 +33,7 @@ public record TrackState(boolean isActive, String title, String artist, String a
     }
 
     public static String detectPlatform(String title, String artist, String album) {
-        String full = ((title != null ? title : "") + " " + (artist != null ? artist : "") + " " + (album != null ? album : "")).toLowerCase();
+        String full = ((title != null ? title : "") + " " + (artist != null ? artist : "") + " " + (album != null ? album : "")).toLowerCase(Locale.ROOT);
         if (full.contains("local") || full.contains("моя музыка") || full.contains("локальн")) {
             return "local";
         }
@@ -62,25 +66,32 @@ public record TrackState(boolean isActive, String title, String artist, String a
 
     public static boolean isSpotifyRunning() {
         long now = System.currentTimeMillis();
-        if (now - lastProcessCheckTime < 2500L) {
-            return cachedSpotifyRunning;
-        }
-        lastProcessCheckTime = now;
-        try {
-            cachedSpotifyRunning = ProcessHandle.allProcesses().anyMatch(p -> {
-                String cmd = p.info().command().orElse("").toLowerCase();
-                return cmd.contains("spotify.exe") || cmd.endsWith("\\spotify") || cmd.endsWith("/spotify") || cmd.contains("spotify");
+        if (now - lastProcessCheckTime >= 2500L && processCheckInFlight.compareAndSet(false, true)) {
+            lastProcessCheckTime = now;
+            CompletableFuture.runAsync(() -> {
+                try {
+                    cachedSpotifyRunning = ProcessHandle.allProcesses().anyMatch(p -> {
+                        String cmd = p.info().command().orElse("").toLowerCase(Locale.ROOT);
+                        return cmd.contains("spotify.exe") || cmd.endsWith("\\spotify") || cmd.endsWith("/spotify") || cmd.contains("spotify");
+                    });
+                }
+                catch (Exception e) {
+                    cachedSpotifyRunning = false;
+                }
+                finally {
+                    processCheckInFlight.set(false);
+                }
             });
-        } catch (Exception e) {
-            cachedSpotifyRunning = false;
         }
         return cachedSpotifyRunning;
     }
 
-    public static String detectPlatformName(String title, String artist, String album) {
-        String p;
-        return switch (p = TrackState.detectPlatform(title, artist, album)) {
-            case "local" -> "Моя музыка";
+    public static String platformDisplayName(String p) {
+        if (p == null) {
+            return "\u041c\u0443\u0437\u044b\u043a\u0430";
+        }
+        return switch (p) {
+            case "local" -> "\u041c\u043e\u044f \u043c\u0443\u0437\u044b\u043a\u0430";
             case "spotify" -> "Spotify";
             case "youtube" -> "YouTube Music";
             case "soundcloud" -> "SoundCloud";
@@ -93,6 +104,10 @@ public record TrackState(boolean isActive, String title, String artist, String a
         };
     }
 
+    public static String detectPlatformName(String title, String artist, String album) {
+        return TrackState.platformDisplayName(TrackState.detectPlatform(title, artist, album));
+    }
+
     public String detectPlatformName() {
         if (this.platformName != null && !this.platformName.isBlank()) {
             return this.platformName;
@@ -100,13 +115,12 @@ public record TrackState(boolean isActive, String title, String artist, String a
         return TrackState.detectPlatformName(this.title, this.artist, this.album);
     }
 
-    public static String generatePlayUrl(String title, String artist) {
-        String p;
+    public static String generatePlayUrlForPlatform(String p, String title, String artist) {
         if (title == null || title.isBlank()) {
             return "https://music.yandex.ru";
         }
         String query = URLEncoder.encode(((String)(artist != null ? artist + " " : "") + title).trim(), StandardCharsets.UTF_8);
-        return switch (p = TrackState.detectPlatform(title, artist, "")) {
+        return switch (p != null ? p : "music") {
             case "spotify" -> "https://open.spotify.com/search/" + query;
             case "youtube" -> "https://music.youtube.com/search?q=" + query;
             case "soundcloud" -> "https://soundcloud.com/search?q=" + query;
@@ -115,6 +129,13 @@ public record TrackState(boolean isActive, String title, String artist, String a
             case "yandex" -> "https://music.yandex.ru/search?text=" + query;
             default -> "https://music.yandex.ru/search?text=" + query;
         };
+    }
+
+    public static String generatePlayUrl(String title, String artist) {
+        if (title == null || title.isBlank()) {
+            return "https://music.yandex.ru";
+        }
+        return TrackState.generatePlayUrlForPlatform(TrackState.detectPlatform(title, artist, ""), title, artist);
     }
 
     public boolean isPlaying() {

@@ -8,21 +8,26 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class TrackMetadataSanitizer {
-    private static final Pattern TRACK_NUMBER_PREFIX = Pattern.compile("^(?:track\\s*)?\\d{1,3}[.\\-_\\s]+(?=[A-Za-zА-Яа-яЁё0-9])", Pattern.CASE_INSENSITIVE);
-    private static final Pattern RADIO_PREFIX = Pattern.compile("^(?:record|радио\\s*рекорд|dfm|europa\\s*plus|европа\\s*плюс|energy|nrj|kiss\\s*fm|maximum|максимум|nashe|наше\\s*радио|retro\\s*fm|ретро\\s*фм)\\s*[:\\-|•~]+\\s*", Pattern.CASE_INSENSITIVE);
-    private static final Pattern VIDEO_NOISE_TAGS = Pattern.compile("(?i)[\\(\\[\\{][^\\)\\]\\}]*(?:official\\s*(?:music\\s*)?video|official\\s*video|official\\s*audio|audio\\s*track|lyric\\s*video|official\\s*visualizer|visualizer|video\\s*clip|music\\s*video|clip|клип|видео|премьера|аудио|\\baudio\\b|сниппет|муд\\s*видео|текст\\s*песни|слова\\s*песни|mv|hd|4k(?:\\s*60fps)?|1080p|720p|hq|uhd|full\\s*hd|soundtrack|ost|original\\s*soundtrack|remaster(?:ed)?|live\\s*performance|live\\s*session)[^\\)\\]\\}]*[\\)\\]\\}]");
-    private static final Pattern PROMO_TRAILING_NOISE = Pattern.compile("(?i)\\s*(?:[\\|•·~\\-–—]|\\s*\u002F\u002F)\\s*(?:премьера.*|official.*|клип.*|video.*|audio.*|lyric.*|текст\\s*песни.*|слова\\s*песни.*|release.*|out\\s*now.*)$");
+    private static final Pattern TRACK_NUMBER_PREFIX = Pattern.compile("^(?:track\\s*)?\\d{1,3}[.\\-_\\s]+(?=[A-Za-zА-Яа-яЁё0-9])", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern RADIO_PREFIX = Pattern.compile("^(?:record|радио\\s*рекорд|dfm|europa\\s*plus|европа\\s*плюс|energy|nrj|kiss\\s*fm|maximum|максимум|nashe|наше\\s*радио|retro\\s*fm|ретро\\s*фм)\\s*[:\\-|•~]+\\s*", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern VIDEO_NOISE_TAGS = Pattern.compile("(?iu)[\\(\\[\\{][^\\)\\]\\}]*(?:official\\s*(?:music\\s*)?video|official\\s*video|official\\s*audio|audio\\s*track|lyric\\s*video|official\\s*visualizer|visualizer|video\\s*clip|music\\s*video|clip|клип|видео|премьера|аудио|\\baudio\\b|сниппет|муд\\s*видео|текст\\s*песни|слова\\s*песни|mv|hd|4k(?:\\s*60fps)?|1080p|720p|hq|uhd|full\\s*hd|soundtrack|ost|original\\s*soundtrack|remaster(?:ed)?|live\\s*performance|live\\s*session)[^\\)\\]\\}]*[\\)\\]\\}]");
+    private static final Pattern PROMO_TRAILING_NOISE = Pattern.compile("(?iu)\\s*(?:[\\|•·~\\-–—]|\\s*\u002F\u002F)\\s*(?:премьера.*|official.*|клип.*|video.*|audio.*|lyric.*|текст\\s*песни.*|слова\\s*песни.*|release.*|out\\s*now.*)$");
     private static final Pattern YEAR_TAGS = Pattern.compile("(?i)[\\(\\[](?:20[0-2]\\d|19[5-9]\\d)[\\)\\]]");
-    private static final Pattern BROWSER_TRAILING_NOISE = Pattern.compile("(?i)\\s*(?:[\\|•·~\\-–—]\\s*(?:youtube(?:\\s*music)?|soundcloud|spotify|vk|вконтакте|yandex|яндекс(?:\\s*музыка)?|слушать(?:\\s*онлайн)?(?:\\s*на\\s*яндекс\\s*музыке)?|apple\\s*music|deezer|music|video|audio))+\\s*$");
+    private static final Pattern BROWSER_TRAILING_NOISE = Pattern.compile("(?iu)\\s*(?:[\\|•·~\\-–—]\\s*(?:youtube(?:\\s*music)?|soundcloud|spotify|vk|вконтакте|yandex|яндекс(?:\\s*музыка)?|слушать(?:\\s*онлайн)?(?:\\s*на\\s*яндекс\\s*музыке)?|apple\\s*music|deezer|music|video|audio))+\\s*$");
     private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("(?i)\\.(?:mp3|wav|ogg|flac|m4a|aac|wma|opus)$");
     private static final Pattern FEAT_IN_TITLE_PATTERN = Pattern.compile("(?i)[\\(\\[](?:feat\\.?|ft\\.?|featuring|with)\\s+([^\\]\\)]+)[\\)\\]]");
     private static final Pattern FEAT_BARE_PATTERN = Pattern.compile("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|with)\\s+([^\\(\\)\\[\\]\\-]+)");
     private static final Pattern REMASTER_PATTERN = Pattern.compile("(?i)[\\(\\[](?:\\d{4}\\s*remaster(?:ed)?|remaster(?:ed)?(?:\\s*\\d{4})?|deluxe(?:\\s*edition)?|anniversary(?:\\s*edition)?|special(?:\\s*edition)?|bonus\\s*track|radio\\s*edit|extended\\s*(?:mix|version)|album\\s*version)[\\)\\]]");
-    private static final Pattern LIVE_PATTERN = Pattern.compile("(?i)\\b(?:live|концерт|живой\\s*звук|live\\s*at|live\\s*from|live\\s*in)\\b");
-    private static final Pattern REMIX_PATTERN = Pattern.compile("(?i)\\b(?:remix|rmx|ремикс|club\\s*mix|vip\\s*mix|dub\\s*mix|edit)\\b");
+    private static final Pattern LIVE_PATTERN = Pattern.compile("(?iu)\\b(?:live|концерт|живой\\s*звук|live\\s*at|live\\s*from|live\\s*in)\\b");
+    private static final Pattern REMIX_PATTERN = Pattern.compile("(?iu)\\b(?:remix|rmx|ремикс|club\\s*mix|vip\\s*mix|dub\\s*mix|edit)\\b");
     private static final Pattern SPEED_UP_PATTERN = Pattern.compile("(?i)\\b(?:speed\\s*up|nightcore|sped\\s*up|fast\\s*version)\\b");
     private static final Pattern SLOWED_PATTERN = Pattern.compile("(?i)\\b(?:slowed(?:\\s*(?:\\+|and)?\\s*reverb)?|reverb)\\b");
-    private static final Pattern ACOUSTIC_PATTERN = Pattern.compile("(?i)\\b(?:acoustic|акустика|unplugged|piano\\s*version)\\b");
+    private static final Pattern ACOUSTIC_PATTERN = Pattern.compile("(?iu)\\b(?:acoustic|акустика|unplugged|piano\\s*version)\\b");
+    private static final Pattern TOPIC_SUFFIX_PATTERN = Pattern.compile("(?iu)\\s*-\\s*(?:topic|\u0442\u0435\u043c\u0430)$");
+    private static final Pattern QUOTES_PATTERN = Pattern.compile("[\"\'«»“”„]");
+    private static final Pattern MULTI_SPACE_PATTERN = Pattern.compile("\\s+");
+    private static final Pattern FEATURED_SPLIT_PATTERN = Pattern.compile("[,&/xX]|(?i)\\s+and\\s+");
+    private static final Pattern PRIMARY_ARTIST_SPLIT_PATTERN = Pattern.compile("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|with|&|x|vs\\.?)\\s+|,\\s*");
 
     public record SanitizedMetadata(
         String cleanTitle,
@@ -52,7 +57,7 @@ public class TrackMetadataSanitizer {
 
         t = normalizeDashes(t);
         a = normalizeDashes(a);
-        a = a.replaceAll("(?i)\\s*-\\s*(?:topic|\u0442\u0435\u043c\u0430)$", "").trim();
+        a = TOPIC_SUFFIX_PATTERN.matcher(a).replaceFirst("").trim();
 
         t = FILE_EXTENSION_PATTERN.matcher(t).replaceFirst("");
         a = FILE_EXTENSION_PATTERN.matcher(a).replaceFirst("");
@@ -120,12 +125,10 @@ public class TrackMetadataSanitizer {
             a = featBareArtist.replaceFirst("").trim();
         }
 
-        for (int i = 0; i < 3; ++i) {
-            t = VIDEO_NOISE_TAGS.matcher(t).replaceAll("");
-            a = VIDEO_NOISE_TAGS.matcher(a).replaceAll("");
-            t = YEAR_TAGS.matcher(t).replaceAll("");
-            a = YEAR_TAGS.matcher(a).replaceAll("");
-        }
+        t = VIDEO_NOISE_TAGS.matcher(t).replaceAll("");
+        a = VIDEO_NOISE_TAGS.matcher(a).replaceAll("");
+        t = YEAR_TAGS.matcher(t).replaceAll("");
+        a = YEAR_TAGS.matcher(a).replaceAll("");
 
         String searchTitle = cleanSearchText(t);
         String searchArtist = cleanSearchText(a);
@@ -172,36 +175,24 @@ public class TrackMetadataSanitizer {
         if (s == null) {
             return "";
         }
-        String res = s;
-        for (int i = 0; i < 3; ++i) {
-            res = VIDEO_NOISE_TAGS.matcher(res).replaceAll("");
-            res = YEAR_TAGS.matcher(res).replaceAll("");
-            res = REMASTER_PATTERN.matcher(res).replaceAll("");
-        }
-        res = res.replaceAll("[\"\'«»“”„]", "");
-        res = res.replaceAll("\\s+", " ").trim();
-        return res;
+        String res = REMASTER_PATTERN.matcher(s).replaceAll("");
+        res = QUOTES_PATTERN.matcher(res).replaceAll("");
+        return MULTI_SPACE_PATTERN.matcher(res).replaceAll(" ").trim();
     }
 
     private static String cleanDisplayText(String s) {
         if (s == null) {
             return "";
         }
-        String res = s;
-        for (int i = 0; i < 3; ++i) {
-            res = VIDEO_NOISE_TAGS.matcher(res).replaceAll("");
-            res = YEAR_TAGS.matcher(res).replaceAll("");
-        }
-        res = res.replaceAll("[\"\'«»“”„]", "");
-        res = res.replaceAll("\\s+", " ").trim();
-        return res;
+        String res = QUOTES_PATTERN.matcher(s).replaceAll("");
+        return MULTI_SPACE_PATTERN.matcher(res).replaceAll(" ").trim();
     }
 
     private static void addFeaturedArtists(List<String> list, String text) {
         if (text == null || text.isBlank()) {
             return;
         }
-        String[] parts = text.split("[,&/xX]|(?i)\\s+and\\s+");
+        String[] parts = FEATURED_SPLIT_PATTERN.split(text);
         for (String p : parts) {
             String trimmed = p.trim();
             if (!trimmed.isEmpty() && !list.contains(trimmed)) {
@@ -215,7 +206,7 @@ public class TrackMetadataSanitizer {
             return "";
         }
         String a = normalizeDashes(artist);
-        String[] split = a.split("(?i)\\s+(?:feat\\.?|ft\\.?|featuring|with|&|x|vs\\.?)\\s+|,\\s*");
+        String[] split = PRIMARY_ARTIST_SPLIT_PATTERN.split(a);
         if (split.length > 0 && !split[0].isBlank()) {
             return split[0].trim();
         }

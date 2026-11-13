@@ -9,6 +9,22 @@ import net.minecraft.class_327;
 import net.minecraft.class_3532;
 
 public class LyricLine {
+    private static final java.util.regex.Pattern MULTI_SPACE_PATTERN = java.util.regex.Pattern.compile("\\s+");
+    private static final java.util.regex.Pattern FONT_OPEN_ANGLE_PATTERN = java.util.regex.Pattern.compile("<font:[^>]+>");
+    private static final java.util.regex.Pattern FONT_OPEN_BRACKET_PATTERN = java.util.regex.Pattern.compile("\\[font=[^\\]]+\\]");
+
+    private static final class CachedWrap {
+        final int maxWidth;
+        final String font;
+        final List<SubLine> subLines;
+
+        CachedWrap(int maxWidth, String font, List<SubLine> subLines) {
+            this.maxWidth = maxWidth;
+            this.font = font;
+            this.subLines = subLines;
+        }
+    }
+
     public final long startMs;
     public final long endMs;
     public final long vocalEndMs;
@@ -18,9 +34,8 @@ public class LyricLine {
     private final int[] charColors;
     private final String[] charAnims;
     private final String[] charFonts;
-    private volatile List<SubLine> cachedSubLines = null;
-    private volatile int cachedSubLinesMaxWidth = -1;
-    private volatile String cachedSubLinesFont = null;
+    private final boolean hasMisideAnim;
+    private volatile CachedWrap cachedWrap = null;
 
     public LyricLine(long startMs, long endMs, String text, List<Word> words) {
         this(startMs, endMs, endMs, text, words);
@@ -164,8 +179,20 @@ public class LyricLine {
             this.charColors[k] = colors.get(k);
         }
         this.charAnims = anims.toArray(new String[0]);
+        boolean foundMiside = false;
+        for (String a : this.charAnims) {
+            if ("MISIDE_FALL".equalsIgnoreCase(a)) {
+                foundMiside = true;
+                break;
+            }
+        }
+        this.hasMisideAnim = foundMiside;
         this.charFonts = fonts.toArray(new String[0]);
         this.words = LyricLine.realignWordsToPlainText(words, this.text);
+    }
+
+    public boolean hasMisideAnim() {
+        return this.hasMisideAnim;
     }
 
     private static List<Word> realignWordsToPlainText(List<Word> rawWords, String plainText) {
@@ -180,9 +207,8 @@ public class LyricLine {
             String cleanToken = LyricLine.stripFormattingTags(w.text())
                 .replace("\\n", " ")
                 .replace(" // ", ", ")
-                .replace(" / ", ", ")
-                .replaceAll("\\s+", " ")
-                .trim();
+                .replace(" / ", ", ");
+            cleanToken = MULTI_SPACE_PATTERN.matcher(cleanToken).replaceAll(" ").trim();
             if (cleanToken.isEmpty()) continue;
             int found = plainText.indexOf(cleanToken, cursor);
             if (found < 0) {
@@ -332,8 +358,7 @@ public class LyricLine {
             if (cFont != null && !cFont.isEmpty() && !"default".equalsIgnoreCase(cFont) && !"minecraft:default".equalsIgnoreCase(cFont) && !"minecraft".equalsIgnoreCase(cFont) && !cFont.startsWith("sys:") && !cFont.startsWith("file:")) {
                 try {
                     String cleanF = cFont.trim().toLowerCase(java.util.Locale.ROOT);
-                    net.minecraft.class_2960 fontId = cleanF.contains(":") ? net.minecraft.class_2960.method_60654(cleanF) : net.minecraft.class_2960.method_60655("minecraft", cleanF);
-                    style = style.method_27704(new net.minecraft.class_11719.class_11721(fontId));
+                    style = style.method_27704(LyricsRenderer.getCachedFontDesc(cleanF));
                 } catch (Exception ignored) {}
             }
             segComp.method_10862(style);
@@ -509,7 +534,7 @@ public class LyricLine {
         if (animMode == null) {
             animMode = "KARAOKE_BOUNCE";
         }
-        switch (animMode.toUpperCase()) {
+        switch (animMode.toUpperCase(Locale.ROOT)) {
             case "KARAOKE_BOUNCE": {
                 float p = this.getCharActiveProgress(charIndex, trackPosMs);
                 if (p >= 0.0f && p <= 1.0f) {
@@ -800,7 +825,7 @@ public class LyricLine {
             baseRgb = this.charColors[charIndex];
         }
         int alphaInt = Math.max(0, Math.min(255, (int)(finalAlpha * 255.0f)));
-        switch (animMode.toUpperCase()) {
+        switch (animMode.toUpperCase(Locale.ROOT)) {
             case "KARAOKE_BOUNCE": {
                 float p = this.getCharActiveProgress(charIndex, trackPosMs);
                 if (p >= 0.0f && p <= 1.0f) {
@@ -870,13 +895,12 @@ public class LyricLine {
             return (float)textRenderer.method_1727(renderStr);
         }
         boolean isDefaultFont = font == null || font.isEmpty() || "default".equalsIgnoreCase(font) || "minecraft:default".equalsIgnoreCase(font) || "minecraft".equalsIgnoreCase(font);
+        String singleStr = LyricsRenderer.singleCharString(c);
         if (isDefaultFont) {
-            return (float)textRenderer.method_1727(String.valueOf(c));
+            return (float)textRenderer.method_1727(singleStr);
         }
         String fontName = font.trim();
-        class_2960 fontId = fontName.contains(":") ? class_2960.method_60654(fontName) : class_2960.method_60655("minecraft", fontName);
-        net.minecraft.class_5250 comp = net.minecraft.class_2561.method_43470(String.valueOf(c));
-        comp.method_10862(net.minecraft.class_2583.field_24360.method_27704(new net.minecraft.class_11719.class_11721(fontId)));
+        net.minecraft.class_5250 comp = LyricsRenderer.getCachedStyledChar(fontName, singleStr);
         return (float)textRenderer.method_27525(comp);
     }
 
@@ -915,24 +939,30 @@ public class LyricLine {
     }
 
     public List<SubLine> getSubLines(class_327 textRenderer, int maxAllowedWidth, String defaultFont) {
-        if (this.cachedSubLines != null && this.cachedSubLinesMaxWidth == maxAllowedWidth && Objects.equals(this.cachedSubLinesFont, defaultFont)) {
-            return this.cachedSubLines;
+        CachedWrap snap = this.cachedWrap;
+        if (snap != null && snap.maxWidth == maxAllowedWidth && Objects.equals(snap.font, defaultFont)) {
+            return snap.subLines;
         }
-        ArrayList<SubLine> result = new ArrayList<SubLine>();
         if (this.text == null || this.text.isEmpty()) {
-            return result;
+            return List.of();
         }
-        int totalWidth = this.measureSubstringWidth(textRenderer, 0, this.text.length(), defaultFont);
+        int len = this.text.length();
+        float[] prefixWidths = new float[len + 1];
+        for (int i = 0; i < len; i++) {
+            String f = this.getCharFont(i);
+            if (f == null || f.isEmpty()) {
+                f = defaultFont;
+            }
+            prefixWidths[i + 1] = prefixWidths[i] + LyricLine.measureCharWidth(textRenderer, this.text.charAt(i), f);
+        }
+        int totalWidth = Math.round(prefixWidths[len]);
         if (totalWidth <= maxAllowedWidth) {
-            result.add(new SubLine(0, this.text.length(), totalWidth));
-            this.cachedSubLines = result;
-            this.cachedSubLinesMaxWidth = maxAllowedWidth;
-            this.cachedSubLinesFont = defaultFont;
-            return result;
+            List<SubLine> single = List.of(new SubLine(0, len, totalWidth));
+            this.cachedWrap = new CachedWrap(maxAllowedWidth, defaultFont, single);
+            return single;
         }
 
         List<int[]> words = new ArrayList<int[]>();
-        int len = this.text.length();
         int wStart = -1;
         for (int i = 0; i < len; i++) {
             char c = this.text.charAt(i);
@@ -952,12 +982,12 @@ public class LyricLine {
         }
 
         if (words.isEmpty()) {
-            this.cachedSubLines = result;
-            this.cachedSubLinesMaxWidth = maxAllowedWidth;
-            this.cachedSubLinesFont = defaultFont;
-            return result;
+            List<SubLine> empty = List.of();
+            this.cachedWrap = new CachedWrap(maxAllowedWidth, defaultFont, empty);
+            return empty;
         }
 
+        ArrayList<SubLine> result = new ArrayList<SubLine>();
         int targetLines = Math.max(2, (int)Math.ceil((double)totalWidth / (double)maxAllowedWidth));
         int targetWidth = Math.max(50, totalWidth / targetLines);
 
@@ -967,12 +997,12 @@ public class LyricLine {
             int remainingWords = words.size() - lineWordStart;
             if (remainingWords == 1) {
                 int charEnd = words.get(lineWordStart)[1];
-                int w = this.measureSubstringWidth(textRenderer, charStart, charEnd, defaultFont);
+                int w = Math.round(prefixWidths[charEnd] - prefixWidths[charStart]);
                 if (w > maxAllowedWidth) {
                     int curStart = charStart;
                     while (curStart < charEnd) {
                         int curEnd = curStart + 1;
-                        while (curEnd <= charEnd && this.measureSubstringWidth(textRenderer, curStart, curEnd, defaultFont) <= maxAllowedWidth) {
+                        while (curEnd <= charEnd && Math.round(prefixWidths[curEnd] - prefixWidths[curStart]) <= maxAllowedWidth) {
                             curEnd++;
                         }
                         if (curEnd > charEnd) {
@@ -981,7 +1011,7 @@ public class LyricLine {
                             curEnd--;
                         }
                         curEnd = Math.min(charEnd, Math.max(curStart + 1, curEnd));
-                        int partW = this.measureSubstringWidth(textRenderer, curStart, curEnd, defaultFont);
+                        int partW = Math.round(prefixWidths[curEnd] - prefixWidths[curStart]);
                         result.add(new SubLine(curStart, curEnd, partW));
                         curStart = curEnd;
                     }
@@ -996,7 +1026,7 @@ public class LyricLine {
 
             for (int k = lineWordStart; k < words.size(); k++) {
                 int candEnd = words.get(k)[1];
-                int candWidth = this.measureSubstringWidth(textRenderer, charStart, candEnd, defaultFont);
+                int candWidth = Math.round(prefixWidths[candEnd] - prefixWidths[charStart]);
 
                 if (candWidth > maxAllowedWidth) {
                     if (k == lineWordStart) {
@@ -1005,7 +1035,7 @@ public class LyricLine {
                     break;
                 }
 
-                int remWidth = this.measureSubstringWidth(textRenderer, candEnd, this.text.length(), defaultFont);
+                int remWidth = Math.round(prefixWidths[len] - prefixWidths[candEnd]);
                 int remLines = targetLines - result.size() - 1;
                 if (remLines > 0 && remWidth > maxAllowedWidth * remLines + 35) {
                     continue;
@@ -1013,7 +1043,7 @@ public class LyricLine {
 
                 double cost = Math.abs((double)(candWidth - targetWidth));
 
-                char lastChar = (candEnd > 0 && candEnd <= this.text.length()) ? this.text.charAt(candEnd - 1) : ' ';
+                char lastChar = (candEnd > 0 && candEnd <= len) ? this.text.charAt(candEnd - 1) : ' ';
                 if (lastChar == ',' || lastChar == ';' || lastChar == ':' || lastChar == '!' || lastChar == '?' || lastChar == '\u2014' || lastChar == '-' || lastChar == ')' || lastChar == '\u00bb' || lastChar == '"') {
                     cost -= 40.0;
                 }
@@ -1021,7 +1051,7 @@ public class LyricLine {
                 if (k + 1 < words.size()) {
                     int nwStart = words.get(k + 1)[0];
                     int nwEnd = words.get(k + 1)[1];
-                    if (nwStart >= 0 && nwEnd <= this.text.length() && nwStart < nwEnd) {
+                    if (nwStart >= 0 && nwEnd <= len && nwStart < nwEnd) {
                         String nextW = this.text.substring(nwStart, nwEnd).toLowerCase(Locale.ROOT);
                         if (nextW.equals("\u0438") || nextW.equals("\u0430") || nextW.equals("\u043d\u043e") || nextW.equals("\u0447\u0442\u043e") || nextW.equals("\u043a\u0430\u043a") || nextW.equals("\u0433\u0434\u0435") || nextW.equals("\u0434\u0430") || nextW.equals("\u0438\u043b\u0438") || nextW.equals("and") || nextW.equals("or") || nextW.equals("but") || nextW.equals("that")) {
                             cost -= 22.0;
@@ -1036,11 +1066,11 @@ public class LyricLine {
             }
 
             int lineEnd = words.get(bestWordIdx)[1];
-            int finalWidth = this.measureSubstringWidth(textRenderer, charStart, lineEnd, defaultFont);
+            int finalWidth = Math.round(prefixWidths[lineEnd] - prefixWidths[charStart]);
             if (finalWidth > maxAllowedWidth && lineWordStart == bestWordIdx) {
                 int curStart = charStart;
                 int curEnd = curStart + 1;
-                while (curEnd <= lineEnd && this.measureSubstringWidth(textRenderer, curStart, curEnd, defaultFont) <= maxAllowedWidth) {
+                while (curEnd <= lineEnd && Math.round(prefixWidths[curEnd] - prefixWidths[curStart]) <= maxAllowedWidth) {
                     curEnd++;
                 }
                 if (curEnd > lineEnd) {
@@ -1049,7 +1079,7 @@ public class LyricLine {
                     curEnd--;
                 }
                 curEnd = Math.min(lineEnd, Math.max(curStart + 1, curEnd));
-                int partW = this.measureSubstringWidth(textRenderer, curStart, curEnd, defaultFont);
+                int partW = Math.round(prefixWidths[curEnd] - prefixWidths[curStart]);
                 result.add(new SubLine(curStart, curEnd, partW));
                 if (curEnd >= lineEnd) {
                     lineWordStart = bestWordIdx + 1;
@@ -1063,18 +1093,17 @@ public class LyricLine {
             lineWordStart = bestWordIdx + 1;
         }
 
-        this.cachedSubLines = result;
-        this.cachedSubLinesMaxWidth = maxAllowedWidth;
-        this.cachedSubLinesFont = defaultFont;
-        return result;
+        List<SubLine> wrapped = List.copyOf(result);
+        this.cachedWrap = new CachedWrap(maxAllowedWidth, defaultFont, wrapped);
+        return wrapped;
     }
 
     public static String toMinecraftFormatting(String text) {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        text = text.replaceAll("<font:[^>]+>", "").replaceAll("</font>", "");
-        text = text.replaceAll("\\[font=[^\\]]+\\]", "").replaceAll("\\[/font\\]", "");
+        text = FONT_OPEN_ANGLE_PATTERN.matcher(text).replaceAll("").replace("</font>", "");
+        text = FONT_OPEN_BRACKET_PATTERN.matcher(text).replaceAll("").replace("[/font]", "");
         StringBuilder sb = new StringBuilder();
         int len = text.length();
         int i = 0;

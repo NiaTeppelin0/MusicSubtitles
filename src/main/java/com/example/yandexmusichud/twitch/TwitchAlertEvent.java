@@ -20,6 +20,9 @@ public class TwitchAlertEvent {
     private final int rewardCost;
     private final int bitsCount;
     private final long timestamp;
+    private final String cachedBadgeText;
+    private final String cachedTitle;
+    private final String cachedSubtitle;
 
     private TwitchAlertEvent(Builder builder) {
         this.type = builder.type;
@@ -33,6 +36,26 @@ public class TwitchAlertEvent {
         this.rewardCost = builder.rewardCost;
         this.bitsCount = builder.bitsCount;
         this.timestamp = System.currentTimeMillis();
+        this.cachedBadgeText = switch (this.type) {
+            case SUB -> "SUB " + this.subTier;
+            case RESUB -> "RESUB x" + this.months;
+            case SUB_GIFT -> "GIFT SUB";
+            case REWARD -> "НАГРАДА";
+            case BITS -> this.bitsCount + " BITS";
+        };
+        this.cachedTitle = switch (this.type) {
+            case SUB -> "\u00a7d\u25C8 \u00a7f" + this.displayName + " \u00a77\u043f\u043e\u0434\u043f\u0438\u0441\u0430\u043b\u0441\u044f!";
+            case RESUB -> "\u00a7d\u25C8 \u00a7f" + this.displayName + " \u00a77\u043f\u0440\u043e\u0434\u043b\u0438\u043b \u0441\u0430\u0431 \u00a7e(" + this.months + " \u043c\u0435\u0441.)";
+            case SUB_GIFT -> "\u00a7d\u25C8 \u00a7f" + this.displayName + " \u00a77\u043f\u043e\u0434\u0430\u0440\u0438\u043b \u0441\u0430\u0431 \u00a7b" + this.recipient;
+            case REWARD -> "\u00a7e\u2726 \u00a7f" + this.displayName + " \u00a77\u043d\u0430\u0433\u0440\u0430\u0434\u0430:";
+            case BITS -> "\u00a76\u2727 \u00a7f" + this.displayName + " \u00a77\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u00a7e" + this.bitsCount + " \u00a77Bits";
+        };
+        this.cachedSubtitle = switch (this.type) {
+            case REWARD -> this.rewardTitle + (!this.message.isEmpty() ? " \u00a77(\u00a7f" + this.message + "\u00a77)" : "");
+            case RESUB, SUB -> !this.message.isEmpty() ? "\u00a7f\"" + this.message + "\"" : "\u00a77Спасибо за поддержку стрима! \u00a7d\u2764";
+            case SUB_GIFT -> "\u00a77Праздник в чате! \u00a7d\u2728";
+            case BITS -> !this.message.isEmpty() ? "\u00a7f\"" + this.message + "\"" : "\u00a77Хайп! \u00a76\u2726";
+        };
     }
 
     public Type getType() {
@@ -80,32 +103,15 @@ public class TwitchAlertEvent {
     }
 
     public String getBadgeText() {
-        return switch (this.type) {
-            case SUB -> "SUB " + this.subTier;
-            case RESUB -> "RESUB x" + this.months;
-            case SUB_GIFT -> "GIFT SUB";
-            case REWARD -> "НАГРАДА";
-            case BITS -> this.bitsCount + " BITS";
-        };
+        return this.cachedBadgeText;
     }
 
     public String getTitle() {
-        return switch (this.type) {
-            case SUB -> "\u00a7d\u25C8 \u00a7f" + this.displayName + " \u00a77\u043f\u043e\u0434\u043f\u0438\u0441\u0430\u043b\u0441\u044f!";
-            case RESUB -> "\u00a7d\u25C8 \u00a7f" + this.displayName + " \u00a77\u043f\u0440\u043e\u0434\u043b\u0438\u043b \u0441\u0430\u0431 \u00a7e(" + this.months + " \u043c\u0435\u0441.)";
-            case SUB_GIFT -> "\u00a7d\u25C8 \u00a7f" + this.displayName + " \u00a77\u043f\u043e\u0434\u0430\u0440\u0438\u043b \u0441\u0430\u0431 \u00a7b" + this.recipient;
-            case REWARD -> "\u00a7e\u2726 \u00a7f" + this.displayName + " \u00a77\u043d\u0430\u0433\u0440\u0430\u0434\u0430:";
-            case BITS -> "\u00a76\u2727 \u00a7f" + this.displayName + " \u00a77\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u00a7e" + this.bitsCount + " \u00a77Bits";
-        };
+        return this.cachedTitle;
     }
 
     public String getSubtitle() {
-        return switch (this.type) {
-            case REWARD -> this.rewardTitle + (!this.message.isEmpty() ? " \u00a77(\u00a7f" + this.message + "\u00a77)" : "");
-            case RESUB, SUB -> !this.message.isEmpty() ? "\u00a7f\"" + this.message + "\"" : "\u00a77Спасибо за поддержку стрима! \u00a7d\u2764";
-            case SUB_GIFT -> "\u00a77Праздник в чате! \u00a7d\u2728";
-            case BITS -> !this.message.isEmpty() ? "\u00a7f\"" + this.message + "\"" : "\u00a77Хайп! \u00a76\u2726";
-        };
+        return this.cachedSubtitle;
     }
 
     public int getAccentColor() {

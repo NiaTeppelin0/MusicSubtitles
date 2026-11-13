@@ -39,6 +39,47 @@ import org.joml.Vector3f;
 import org.joml.Vector4f;
 
 public class LyricsRenderer {
+    private static final String[] ASCII_CHAR_STRINGS = new String[128];
+    private static final java.util.concurrent.ConcurrentHashMap<String, net.minecraft.class_11719.class_11721> FONT_DESC_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<String, net.minecraft.class_2583> FONT_STYLE_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<String, net.minecraft.class_5250> STYLED_CHAR_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static {
+        for (int i = 0; i < 128; ++i) {
+            ASCII_CHAR_STRINGS[i] = String.valueOf((char)i);
+        }
+    }
+
+    public static String singleCharString(char c) {
+        return c < 128 ? ASCII_CHAR_STRINGS[c] : String.valueOf(c);
+    }
+
+    public static net.minecraft.class_11719.class_11721 getCachedFontDesc(String fontName) {
+        return FONT_DESC_CACHE.computeIfAbsent(fontName, name -> {
+            class_2960 fontId = name.contains(":") ? class_2960.method_60654(name) : class_2960.method_60655("minecraft", name);
+            return new net.minecraft.class_11719.class_11721(fontId);
+        });
+    }
+
+    public static net.minecraft.class_2583 getCachedFontStyle(String fontName) {
+        return FONT_STYLE_CACHE.computeIfAbsent(fontName, name -> net.minecraft.class_2583.field_24360.method_27704(getCachedFontDesc(name)));
+    }
+
+    public static net.minecraft.class_5250 getCachedStyledChar(String fontName, String renderStr) {
+        String key = fontName + '\u0000' + renderStr;
+        net.minecraft.class_5250 cached = STYLED_CHAR_CACHE.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        net.minecraft.class_5250 comp = net.minecraft.class_2561.method_43470(renderStr);
+        comp.method_10862(getCachedFontStyle(fontName));
+        if (STYLED_CHAR_CACHE.size() > 2048) {
+            STYLED_CHAR_CACHE.clear();
+        }
+        STYLED_CHAR_CACHE.putIfAbsent(key, comp);
+        return comp;
+    }
+
     private final LyricsManager lyricsManager;
     private final NowPlayingClient client;
     private long last3DRenderNanoTime = 0L;
@@ -271,7 +312,7 @@ public class LyricsRenderer {
         if (!bubble.isSurfaceAttached && (bubble.charGroundTargetY == null || bubble.charGroundTargetY.length != text.length())) {
             bubble.charGroundTargetY = new float[text.length()];
             float defaultGroundY = 28.0f;
-            if (bubble.worldPos != null && mc.field_1687 != null && mc.field_1724 != null) {
+            if (("MISIDE_FALL".equalsIgnoreCase(animMode) || line.hasMisideAnim()) && bubble.worldPos != null && mc.field_1687 != null && mc.field_1724 != null) {
                 for (int lineIdx = 0; lineIdx < subLines.size(); ++lineIdx) {
                     LyricLine.SubLine sl = subLines.get(lineIdx);
                     float y = startY + (float)lineIdx * (float)lineHeight;
@@ -343,8 +384,6 @@ public class LyricsRenderer {
             avgTargetGroundY = sum / (float)bubble.charGroundTargetY.length;
         }
         float maxBgFall = bubble.isSurfaceAttached ? 0.0f : Math.max(0.0f, (avgTargetGroundY - 1.2f) - panelH - panelY);
-        float bgAnimY = bubble.isSurfaceAttached ? 0.0f : line.getLineAnimationOffsetY(effectivePosMs, animMode, maxBgFall);
-        float bgTiltX = bubble.isSurfaceAttached ? 0.0f : line.getLineAnimationTiltX(effectivePosMs, animMode);
         boolean seeThrough = HudConfig.INSTANCE.subtitlesSeeThrough;
         int bgAlpha = (int)(HudConfig.INSTANCE.subtitlesBgAlpha * overallAlpha * 230.0f);
         class_327.class_6415 layerType = seeThrough ? class_327.class_6415.field_33994 : class_327.class_6415.field_33993;
@@ -371,7 +410,7 @@ public class LyricsRenderer {
                 boolean isCustom = CustomFontManager.isCustomFont(charFont);
                 boolean isDefaultFont = !isCustom && (charFont == null || charFont.isEmpty() || "default".equalsIgnoreCase(charFont) || "minecraft:default".equalsIgnoreCase(charFont) || "minecraft".equalsIgnoreCase(charFont));
                 boolean isRuneFont = !isCustom && (charFont != null && (charFont.contains("alt") || charFont.contains("illager")));
-                String renderStr = isRuneFont ? transliterateForRune(c) : String.valueOf(c);
+                String renderStr = isRuneFont ? transliterateForRune(c) : singleCharString(c);
                 if (renderStr.isEmpty()) {
                     renderStr = " ";
                 }
@@ -384,9 +423,7 @@ public class LyricsRenderer {
                     charW = textRenderer.method_1727(renderStr);
                 } else {
                     String fontName = charFont.trim();
-                    class_2960 fontId = fontName.contains(":") ? class_2960.method_60654(fontName) : class_2960.method_60655("minecraft", fontName);
-                    charComp = net.minecraft.class_2561.method_43470(renderStr);
-                    charComp.method_10862(net.minecraft.class_2583.field_24360.method_27704(new net.minecraft.class_11719.class_11721(fontId)));
+                    charComp = getCachedStyledChar(fontName, renderStr);
                     charW = textRenderer.method_27525(charComp);
                 }
                 float charAlpha = line.getCharAlpha(i, effectivePosMs);
@@ -524,8 +561,9 @@ public class LyricsRenderer {
 
     private void render2DInternal(class_332 context, int mouseX, int mouseY) {
         class_310 mc = class_310.method_1551();
+        List<SubtitleBubble> activeBubbles = this.lyricsManager.getActiveBubbles();
         boolean hasLive2DBubbles = false;
-        for (SubtitleBubble b : this.lyricsManager.getActiveBubbles()) {
+        for (SubtitleBubble b : activeBubbles) {
             if (b.isLiveCaption && b.worldPos == null) {
                 hasLive2DBubbles = true;
                 break;
@@ -585,12 +623,12 @@ public class LyricsRenderer {
         if (!isLmbDown && this.draggedBubble != null) {
             this.handleMouseRelease();
         }
-        if (this.draggedBubble != null && !this.lyricsManager.getActiveBubbles().contains(this.draggedBubble)) {
+        if (this.draggedBubble != null && !activeBubbles.contains(this.draggedBubble)) {
             this.handleMouseRelease();
         }
         class_327 textRenderer = mc.field_1772;
         float[] obstacleBounds = getScreenObstacleBounds(mc.field_1755, screenWidth, screenHeight);
-        for (SubtitleBubble bubble : this.lyricsManager.getActiveBubbles()) {
+        for (SubtitleBubble bubble : activeBubbles) {
             if (bubble.worldPos != null) continue;
             float overallAlpha = bubble.getOverallAlpha(currentPosMs, now);
             if (overallAlpha <= 0.005f) continue;
@@ -675,7 +713,6 @@ public class LyricsRenderer {
             targetGroundY = sum / (float)bubble.charGroundTargetY.length;
         }
         float maxBgFall = Math.max(0.0f, targetGroundY - (float)(glyphHeight + padY * 2));
-        float bgAnimY = line.getLineAnimationOffsetY(effectivePosMs, animMode, maxBgFall);
         int textRgb = (state.isActive() ? HudConfig.INSTANCE.getTrackColor(state.artist(), state.title(), HudConfig.INSTANCE.subtitlesColor) : HudConfig.INSTANCE.subtitlesColor) & 0xFFFFFF;
         boolean hasShadow = HudConfig.INSTANCE.subtitlesTextShadow;
         int activeColor = state.isActive() ? HudConfig.INSTANCE.getTrackActiveColor(state.artist(), state.title(), HudConfig.INSTANCE.subtitlesActiveColor) : HudConfig.INSTANCE.subtitlesActiveColor;
@@ -694,7 +731,7 @@ public class LyricsRenderer {
                 boolean isCustom = CustomFontManager.isCustomFont(charFont);
                 boolean isDefaultFont = !isCustom && (charFont == null || charFont.isEmpty() || "default".equalsIgnoreCase(charFont) || "minecraft:default".equalsIgnoreCase(charFont) || "minecraft".equalsIgnoreCase(charFont));
                 boolean isRuneFont = !isCustom && (charFont != null && (charFont.contains("alt") || charFont.contains("illager")));
-                String renderStr = isRuneFont ? transliterateForRune(c) : String.valueOf(c);
+                String renderStr = isRuneFont ? transliterateForRune(c) : singleCharString(c);
                 if (renderStr.isEmpty()) {
                     renderStr = " ";
                 }
@@ -707,9 +744,7 @@ public class LyricsRenderer {
                     charW = textRenderer.method_1727(renderStr);
                 } else {
                     String fontName = charFont.trim();
-                    class_2960 fontId = fontName.contains(":") ? class_2960.method_60654(fontName) : class_2960.method_60655("minecraft", fontName);
-                    charComp = net.minecraft.class_2561.method_43470(renderStr);
-                    charComp.method_10862(net.minecraft.class_2583.field_24360.method_27704(new net.minecraft.class_11719.class_11721(fontId)));
+                    charComp = getCachedStyledChar(fontName, renderStr);
                     charW = textRenderer.method_27525(charComp);
                 }
                 float charAlpha = line.getCharAlpha(i, effectivePosMs);

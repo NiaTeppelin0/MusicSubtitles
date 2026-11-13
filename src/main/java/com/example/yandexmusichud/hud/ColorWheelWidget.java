@@ -14,6 +14,7 @@ import net.minecraft.class_3532;
 public class ColorWheelWidget {
     private static final class_2960 COLOR_WHEEL_TEXTURE = class_2960.method_60655((String)"yandexmusichud", (String)"dynamic/color_wheel");
     private static volatile boolean textureInitialized = false;
+    private static volatile boolean textureGenerating = false;
     public final int x;
     public final int y;
     public final int size;
@@ -67,14 +68,21 @@ public class ColorWheelWidget {
         }
     }
 
-    private static void ensureTextureCreated() {
-        if (textureInitialized) {
+    private static synchronized void ensureTextureCreated() {
+        if (textureInitialized || textureGenerating) {
             return;
         }
+        class_310 mc = class_310.method_1551();
+        if (mc == null) {
+            return;
+        }
+        textureGenerating = true;
+        class_1011 image = null;
+        boolean handedOff = false;
         try {
             int texSize = 128;
             float texRadius = (float)texSize / 2.0f;
-            class_1011 image = new class_1011(texSize, texSize, false);
+            image = new class_1011(texSize, texSize, false);
             for (int py = 0; py < texSize; ++py) {
                 for (int px = 0; px < texSize; ++px) {
                     float dx = (float)px - texRadius + 0.5f;
@@ -101,22 +109,42 @@ public class ColorWheelWidget {
                     image.method_61941(px, py, 0);
                 }
             }
-            class_310 mc = class_310.method_1551();
             if (mc.method_18854()) {
                 class_1043 texture = new class_1043(() -> "color_wheel", image);
+                handedOff = true;
                 mc.method_1531().method_4616(COLOR_WHEEL_TEXTURE, (class_1044)texture);
                 textureInitialized = true;
+                textureGenerating = false;
             } else {
+                final class_1011 finalImage = image;
+                handedOff = true;
                 mc.execute(() -> {
+                    boolean registered = false;
                     try {
-                        class_1043 texture = new class_1043(() -> "color_wheel", image);
+                        class_1043 texture = new class_1043(() -> "color_wheel", finalImage);
+                        registered = true;
                         mc.method_1531().method_4616(COLOR_WHEEL_TEXTURE, (class_1044)texture);
                         textureInitialized = true;
-                    } catch (Exception ignored) {}
+                    } catch (Exception ignored) {
+                        if (!registered) {
+                            try {
+                                finalImage.close();
+                            } catch (Exception ignored2) {}
+                        }
+                    } finally {
+                        textureGenerating = false;
+                    }
                 });
             }
-        }
-        catch (Exception ignored) {
+        } catch (Exception ignored) {
+            textureGenerating = false;
+        } finally {
+            if (!handedOff && image != null) {
+                try {
+                    image.close();
+                } catch (Exception ignored) {}
+                textureGenerating = false;
+            }
         }
     }
 

@@ -33,6 +33,9 @@ public class GeniusLyricsProvider {
     private static final Pattern BR_TAG_PATTERN = Pattern.compile("<br\\s*/?>", 2);
     private static final Pattern P_TAG_PATTERN = Pattern.compile("</?p[^>]*>", 2);
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
+    private static final Pattern LINE_SPLIT_PATTERN = Pattern.compile("\\r?\\n");
+    private static final Pattern WHITESPACE_PATTERN = Pattern.compile("\\s+");
+    private static final Pattern NON_ALNUM_PATTERN = Pattern.compile("[^\\p{L}\\p{N}\\s]");
     private static final Pattern CONTRIBUTORS_PATTERN = Pattern.compile("^\\d+\\s+Contributors.*$", 2);
 
     public static String fetchLyrics(String title, String artist, long timeoutMs) {
@@ -229,7 +232,7 @@ public class GeniusLyricsProvider {
             text = P_TAG_PATTERN.matcher(text).replaceAll("\n");
             text = HTML_TAG_PATTERN.matcher(text).replaceAll("");
             text = GeniusLyricsProvider.unescapeHtml(text);
-            for (String line : lines = text.split("\\r?\\n")) {
+            for (String line : lines = LINE_SPLIT_PATTERN.split(text)) {
                 if ((line = line.trim()).isEmpty()) {
                     if (!lastWasEmpty) {
                         sb.append("\n");
@@ -272,8 +275,8 @@ public class GeniusLyricsProvider {
         if (a.contains(b) || b.contains(a)) {
             return (double)Math.min(a.length(), b.length()) / (double)Math.max(a.length(), b.length());
         }
-        String[] wordsA = a.split("\\s+");
-        String[] wordsB = b.split("\\s+");
+        String[] wordsA = WHITESPACE_PATTERN.split(a);
+        String[] wordsB = WHITESPACE_PATTERN.split(b);
         HashSet<String> setA = new HashSet<String>(Arrays.asList(wordsA));
         HashSet<String> setB = new HashSet<String>(Arrays.asList(wordsB));
         setA.removeIf(w -> w.length() < 2 && (w.isEmpty() || w.codePointAt(0) <= 0x2E80));
@@ -292,6 +295,7 @@ public class GeniusLyricsProvider {
         if (s == null) {
             return "";
         }
-        return s.toLowerCase(Locale.ROOT).replace('\u0451', '\u0435').replaceAll("[^\\p{L}\\p{N}\\s]", "").replaceAll("\\s+", " ").trim();
+        String noPunct = NON_ALNUM_PATTERN.matcher(s.toLowerCase(Locale.ROOT).replace('\u0451', '\u0435')).replaceAll("");
+        return WHITESPACE_PATTERN.matcher(noPunct).replaceAll(" ").trim();
     }
 }

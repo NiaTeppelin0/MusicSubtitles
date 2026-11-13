@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -31,7 +32,7 @@ public class LocalMusicScanner {
 
         try (Stream<Path> stream = Files.walk(dir, 5)) {
             stream.filter(Files::isRegularFile).filter(p -> {
-                String s = p.getFileName().toString().toLowerCase();
+                String s = p.getFileName().toString().toLowerCase(Locale.ROOT);
                 return s.endsWith(".mp3") || s.endsWith(".wav") || s.endsWith(".ogg");
             }).forEach(p -> {
                 try {

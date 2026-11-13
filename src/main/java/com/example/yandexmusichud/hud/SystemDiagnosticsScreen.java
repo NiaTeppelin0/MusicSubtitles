@@ -43,11 +43,11 @@ extends class_437 {
     private final List<DiagnosticItem> items = new ArrayList<DiagnosticItem>();
     private final List<DiagParticle> particles = new ArrayList<DiagParticle>();
     private final List<DiagShockwave> shockwaves = new ArrayList<DiagShockwave>();
-    private boolean isScanning = false;
+    private volatile boolean isScanning = false;
     private long lastScanTime = 0L;
     private int hoveredCardIndex = -1;
     private boolean isDetailedScan = false;
-    private String lastReport = "";
+    private volatile String lastReport = "";
     private long reportCopiedToastTime = 0L;
     private double scrollOffset = 0.0;
     private double targetScrollOffset = 0.0;
@@ -148,9 +148,9 @@ extends class_437 {
                 String osName = System.getProperty("os.name", "Unknown");
                 String osVersion = System.getProperty("os.version", "");
                 String osArch = System.getProperty("os.arch", "");
-                boolean isWindows = osName.toLowerCase().contains("win");
-                boolean isLinux = osName.toLowerCase().contains("linux");
-                boolean isMac = osName.toLowerCase().contains("mac");
+                boolean isWindows = osName.toLowerCase(java.util.Locale.ROOT).contains("win");
+                boolean isLinux = osName.toLowerCase(java.util.Locale.ROOT).contains("linux");
+                boolean isMac = osName.toLowerCase(java.util.Locale.ROOT).contains("mac");
                 boolean bl = isWin11 = isWindows && (osName.contains("11") || osVersion.startsWith("10.0") && SystemDiagnosticsScreen.parseBuild(osVersion) >= 22000);
                 if (isWin11) {
                     osItem.status = Status.OK;
@@ -183,6 +183,7 @@ extends class_437 {
                 Path exePath = configDir.resolve("YandexMusicHelper.exe");
                 boolean exeExists = Files.exists(exePath, new LinkOption[0]);
                 boolean isHelperResponding = false;
+                HttpURLConnection conn = null;
                 try {
                     int port = HudConfig.INSTANCE.helperPort;
                     if (port <= 0) {
@@ -205,17 +206,20 @@ extends class_437 {
                     }
                     if (port > 0) {
                         URL pingUrl = URI.create("http://127.0.0.1:" + port + "/now-playing").toURL();
-                        HttpURLConnection conn = (HttpURLConnection)pingUrl.openConnection();
+                        conn = (HttpURLConnection)pingUrl.openConnection();
                         conn.setRequestMethod("GET");
                         conn.setConnectTimeout(800);
                         conn.setReadTimeout(800);
                         int respCode = conn.getResponseCode();
                         isHelperResponding = respCode == 200;
-                        conn.disconnect();
                     }
                 }
                 catch (Exception ignored) {
                     isHelperResponding = false;
+                } finally {
+                    if (conn != null) {
+                        conn.disconnect();
+                    }
                 }
                 boolean isLinuxPlayerctlOk = isLinux && HelperProcessManager.INSTANCE != null && HelperProcessManager.INSTANCE.isLinuxPlayerctlAvailable();
                 if (isLinux) {
@@ -279,17 +283,22 @@ extends class_437 {
                 }
                 boolean pulseSyncRunning = false;
                 if (HudConfig.INSTANCE.pulseSyncIntegration) {
+                    HttpURLConnection psConn = null;
                     try {
                         int psPort = HudConfig.INSTANCE.pulseSyncPort > 0 ? HudConfig.INSTANCE.pulseSyncPort : 2007;
                         URL psUrl = URI.create("http://127.0.0.1:" + psPort + "/get_track").toURL();
-                        HttpURLConnection psConn = (HttpURLConnection)psUrl.openConnection();
+                        psConn = (HttpURLConnection)psUrl.openConnection();
                         psConn.setRequestMethod("GET");
                         psConn.setConnectTimeout(600);
                         psConn.setReadTimeout(600);
                         int psCode = psConn.getResponseCode();
                         pulseSyncRunning = psCode == 200;
-                        psConn.disconnect();
-                    } catch (Exception ignored) {}
+                    } catch (Exception ignored) {
+                    } finally {
+                        if (psConn != null) {
+                            psConn.disconnect();
+                        }
+                    }
                 }
                 if (pulseSyncRunning) {
                     pulseSyncItem.status = Status.OK;
@@ -411,9 +420,10 @@ extends class_437 {
                 String osName = System.getProperty("os.name", "Unknown");
                 String osVersion = System.getProperty("os.version", "");
                 String osArch = System.getProperty("os.arch", "");
-                boolean isWindows = osName.toLowerCase().contains("win");
-                boolean isLinux = osName.toLowerCase().contains("linux");
-                boolean isMac = osName.toLowerCase().contains("mac");
+                String osLower = osName.toLowerCase(java.util.Locale.ROOT);
+                boolean isWindows = osLower.contains("win");
+                boolean isLinux = osLower.contains("linux");
+                boolean isMac = osLower.contains("mac");
                 int winBuild = SystemDiagnosticsScreen.parseBuild(osVersion);
                 boolean isWin11 = isWindows && (osName.contains("11") || osVersion.startsWith("10.0") && winBuild >= 22000);
                 Runtime rt = Runtime.getRuntime();
@@ -807,7 +817,7 @@ extends class_437 {
             }
             if (!item.detailedLog.isEmpty()) {
                 sb.append("    \u0414\u0435\u0442\u0430\u043b\u0438:\n");
-                for (String line : item.detailedLog.split("\n")) {
+                for (String line : LINE_SPLIT_PATTERN.split(item.detailedLog)) {
                     sb.append("      ").append(line).append("\n");
                 }
             }
@@ -855,13 +865,17 @@ extends class_437 {
         }
     }
 
-    private static int cachedWinBuild = -1;
+    private static final java.util.regex.Pattern DOT_SPLIT_PATTERN = java.util.regex.Pattern.compile("\\.");
+    private static final java.util.regex.Pattern NON_DIGIT_PATTERN = java.util.regex.Pattern.compile("[^0-9]");
+    private static final java.util.regex.Pattern WIN_BUILD_PATTERN = java.util.regex.Pattern.compile("10\\.0\\.(\\d+)");
+    private static final java.util.regex.Pattern LINE_SPLIT_PATTERN = java.util.regex.Pattern.compile("\\n");
+    private static volatile int cachedWinBuild = -1;
 
     private static int parseBuild(String osVersion) {
         try {
-            String[] parts = osVersion.split("\\.");
+            String[] parts = DOT_SPLIT_PATTERN.split(osVersion);
             if (parts.length >= 3) {
-                int b = Integer.parseInt(parts[2].replaceAll("[^0-9]", ""));
+                int b = Integer.parseInt(NON_DIGIT_PATTERN.matcher(parts[2]).replaceAll(""));
                 if (b > 0) {
                     return b;
                 }
@@ -872,18 +886,26 @@ extends class_437 {
         if (cachedWinBuild >= 0) {
             return cachedWinBuild;
         }
-        String osName = System.getProperty("os.name", "").toLowerCase();
+        String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
         if (osName.contains("win")) {
+            Process p = null;
             try {
-                Process p = new ProcessBuilder("cmd.exe", "/c", "ver").redirectErrorStream(true).start();
-                String out = new String(p.getInputStream().readAllBytes());
-                java.util.regex.Matcher m = java.util.regex.Pattern.compile("10\\.0\\.(\\d+)").matcher(out);
-                if (m.find()) {
-                    cachedWinBuild = Integer.parseInt(m.group(1));
-                    return cachedWinBuild;
+                p = new ProcessBuilder("cmd.exe", "/c", "ver").redirectErrorStream(true).start();
+                boolean finished = p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+                if (finished) {
+                    String out = new String(p.getInputStream().readAllBytes());
+                    java.util.regex.Matcher m = WIN_BUILD_PATTERN.matcher(out);
+                    if (m.find()) {
+                        cachedWinBuild = Integer.parseInt(m.group(1));
+                        return cachedWinBuild;
+                    }
                 }
             }
             catch (Throwable ignored) {
+            } finally {
+                if (p != null) {
+                    p.destroyForcibly();
+                }
             }
         }
         cachedWinBuild = 0;
@@ -891,9 +913,10 @@ extends class_437 {
     }
 
     private static boolean pingUrl(String urlStr, int timeoutMs) {
+        HttpURLConnection conn = null;
         try {
             URL u = URI.create(urlStr).toURL();
-            HttpURLConnection conn = (HttpURLConnection)u.openConnection();
+            conn = (HttpURLConnection)u.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(timeoutMs);
             conn.setReadTimeout(timeoutMs);
@@ -904,14 +927,19 @@ extends class_437 {
         }
         catch (Exception e) {
             return false;
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 
     private static long pingUrlTimed(String urlStr, int timeoutMs) {
         long t0 = System.currentTimeMillis();
+        HttpURLConnection conn = null;
         try {
             URL u = URI.create(urlStr).toURL();
-            HttpURLConnection conn = (HttpURLConnection)u.openConnection();
+            conn = (HttpURLConnection)u.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(timeoutMs);
             conn.setReadTimeout(timeoutMs);
@@ -926,6 +954,10 @@ extends class_437 {
         }
         catch (Exception e) {
             return -1L;
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 

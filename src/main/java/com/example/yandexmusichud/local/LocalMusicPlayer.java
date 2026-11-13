@@ -8,11 +8,14 @@ import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.class_2561;
@@ -52,6 +55,8 @@ public class LocalMusicPlayer {
     private final Random random = new Random();
     private LocalMusicTrack lastReportedTrack = null;
     private String lastSyncedMissingKey = "";
+    private long lastMissingScanTime = 0L;
+    private int consecutivePlaybackErrors = 0;
     private boolean initialized = false;
     private volatile long driftAdjustmentMs = 0L;
     private volatile long lastCalculatedDriftMs = 0L;
@@ -289,7 +294,7 @@ public class LocalMusicPlayer {
             this.lastSyncStatusText = "ТРЕК ЗАГРУЖЕН";
             this.lastSyncStatusColor = 0xFF00F5D4;
         } else {
-            String key = (targetArtist + " - " + targetTitle).toLowerCase();
+            String key = (targetArtist + " - " + targetTitle).toLowerCase(Locale.ROOT);
             if (!key.equals(this.lastSyncedMissingKey)) {
                 this.lastSyncedMissingKey = key;
                 this.lastSyncStatusText = "ПОИСК ПОТОКА...";
@@ -313,9 +318,9 @@ public class LocalMusicPlayer {
         if (dot > 0) {
             fn = fn.substring(0, dot);
         }
-        String normFn = fn.toLowerCase();
-        String normT = title.toLowerCase();
-        String normA = artist.toLowerCase();
+        String normFn = fn.toLowerCase(Locale.ROOT);
+        String normT = title.toLowerCase(Locale.ROOT);
+        String normA = artist.toLowerCase(Locale.ROOT);
         if (!normT.isEmpty() && normFn.contains(normT)) {
             return true;
         }
@@ -331,12 +336,19 @@ public class LocalMusicPlayer {
                 return t;
             }
         }
+        long now = System.currentTimeMillis();
+        if (now - this.lastMissingScanTime < 5000L) {
+            return null;
+        }
+        this.lastMissingScanTime = now;
         List<LocalMusicTrack> scanned = LocalMusicScanner.INSTANCE.scanTracks();
         for (LocalMusicTrack t : scanned) {
+            if (!this.playlist.contains(t)) {
+                this.playlist.add(t);
+            }
+        }
+        for (LocalMusicTrack t : this.playlist) {
             if (this.matchesTrack(t, title, artist)) {
-                if (!this.playlist.contains(t)) {
-                    this.playlist.add(t);
-                }
                 return t;
             }
         }
@@ -527,6 +539,8 @@ public class LocalMusicPlayer {
 
     private void runPlaybackLoop(LocalMusicTrack track, long startOffsetMs, long sessionId) {
         String fmt = track.getFormat();
+        boolean hadError = false;
+        long startNs = System.nanoTime();
         try {
             if ("MP3".equalsIgnoreCase(fmt)) {
                 this.playMp3Stream(track, startOffsetMs, sessionId);
@@ -535,9 +549,25 @@ public class LocalMusicPlayer {
             } else if ("OGG".equalsIgnoreCase(fmt)) {
                 this.playOggStream(track, startOffsetMs, sessionId);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            hadError = true;
+        }
 
         if (sessionId == this.playbackSessionId && this.isPlaying && !this.shouldStop && !Thread.currentThread().isInterrupted()) {
+            long elapsedNs = System.nanoTime() - startNs;
+            if (hadError && elapsedNs < 1_000_000_000L) {
+                ++this.consecutivePlaybackErrors;
+                if (this.consecutivePlaybackErrors >= 2 || this.repeat) {
+                    CompletableFuture.runAsync(() -> {
+                        if (sessionId == this.playbackSessionId) {
+                            this.stop();
+                        }
+                    });
+                    return;
+                }
+            } else {
+                this.consecutivePlaybackErrors = 0;
+            }
             CompletableFuture.runAsync(() -> {
                 if (sessionId == this.playbackSessionId && this.isPlaying && !this.shouldStop) {
                     this.onTrackEnded();
@@ -708,12 +738,22 @@ public class LocalMusicPlayer {
         long dec = 0L;
         SourceDataLine line = null;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            byte[] oggBytes = Files.readAllBytes(track.getPath());
-            if (oggBytes.length == 0) {
+            try (SeekableByteChannel ch = Files.newByteChannel(track.getPath(), StandardOpenOption.READ)) {
+                long fileSize = ch.size();
+                if (fileSize <= 0L || fileSize > Integer.MAX_VALUE) {
+                    return;
+                }
+                nativeOggData = MemoryUtil.memAlloc((int)fileSize);
+                while (nativeOggData.hasRemaining()) {
+                    if (ch.read(nativeOggData) <= 0) {
+                        break;
+                    }
+                }
+                nativeOggData.flip();
+            }
+            if (!nativeOggData.hasRemaining()) {
                 return;
             }
-            nativeOggData = MemoryUtil.memAlloc(oggBytes.length);
-            nativeOggData.put(oggBytes).flip();
             IntBuffer err = stack.mallocInt(1);
             dec = STBVorbis.stb_vorbis_open_memory(nativeOggData, err, null);
             if (dec == 0L) {
@@ -836,7 +876,7 @@ public class LocalMusicPlayer {
                         } catch (Exception ignored) {
                             coverManager.resetToDefault();
                         }
-                    } else {
+                    } else if (!com.example.yandexmusichud.hud.PlayerBadgeManager.INSTANCE.hasSyncedTrack()) {
                         coverManager.resetToDefault();
                     }
                 }

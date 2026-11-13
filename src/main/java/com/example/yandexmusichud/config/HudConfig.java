@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileAttribute;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -193,6 +194,10 @@ public class HudConfig {
         this.setTrackStyle(artist, title, color, activeColor, mode, scale, "minecraft:default");
     }
 
+    private static String buildTrackKey(String artist, String title) {
+        return (artist + "___" + title).toLowerCase(Locale.ROOT);
+    }
+
     public void setTrackStyle(String artist, String title, int color, int activeColor, String mode, float scale, String font) {
         if (this.trackStyles == null) {
             this.trackStyles = new HashMap<String, String>();
@@ -200,16 +205,16 @@ public class HudConfig {
         if (artist == null || title == null) {
             return;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         String safeFont = (font != null && !font.isEmpty() && !"minecraft".equalsIgnoreCase(font.trim())) ? font.trim() : "minecraft:default";
         this.trackStyles.put(key, color + ":" + activeColor + ":" + mode + ":" + scale + ":" + safeFont);
     }
 
     public String getTrackFont(String artist, String title, String defaultVal) {
-        if (this.trackStyles == null || artist == null || title == null) {
+        if (this.trackStyles == null || this.trackStyles.isEmpty() || artist == null || title == null) {
             return defaultVal;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         String val = this.trackStyles.get(key);
         if (val != null) {
             String[] parts = val.split(":", 5);
@@ -225,10 +230,10 @@ public class HudConfig {
     }
 
     public int getTrackColor(String artist, String title, int defaultVal) {
-        if (this.trackStyles == null || artist == null || title == null) {
+        if (this.trackStyles == null || this.trackStyles.isEmpty() || artist == null || title == null) {
             return defaultVal;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         String val = this.trackStyles.get(key);
         if (val != null) {
             String[] parts = val.split(":");
@@ -242,10 +247,10 @@ public class HudConfig {
     }
 
     public int getTrackActiveColor(String artist, String title, int defaultVal) {
-        if (this.trackStyles == null || artist == null || title == null) {
+        if (this.trackStyles == null || this.trackStyles.isEmpty() || artist == null || title == null) {
             return defaultVal;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         String val = this.trackStyles.get(key);
         if (val != null) {
             String[] parts = val.split(":");
@@ -259,10 +264,10 @@ public class HudConfig {
     }
 
     public String getTrackMode(String artist, String title, String defaultVal) {
-        if (this.trackStyles == null || artist == null || title == null) {
+        if (this.trackStyles == null || this.trackStyles.isEmpty() || artist == null || title == null) {
             return defaultVal;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         String val = this.trackStyles.get(key);
         if (val != null) {
             String[] parts = val.split(":");
@@ -274,10 +279,10 @@ public class HudConfig {
     }
 
     public float getTrackScale(String artist, String title, float defaultVal) {
-        if (this.trackStyles == null || artist == null || title == null) {
+        if (this.trackStyles == null || this.trackStyles.isEmpty() || artist == null || title == null) {
             return defaultVal;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         String val = this.trackStyles.get(key);
         if (val != null) {
             String[] parts = val.split(":");
@@ -291,10 +296,10 @@ public class HudConfig {
     }
 
     public int getTrackSyncOffset(String artist, String title) {
-        if (this.trackOffsets == null || artist == null || title == null) {
+        if (this.trackOffsets == null || this.trackOffsets.isEmpty() || artist == null || title == null) {
             return 0;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         return this.trackOffsets.getOrDefault(key, 0);
     }
 
@@ -305,7 +310,7 @@ public class HudConfig {
         if (artist == null || title == null) {
             return;
         }
-        String key = (artist + "___" + title).toLowerCase();
+        String key = HudConfig.buildTrackKey(artist, title);
         if (offsetMs == 0) {
             this.trackOffsets.remove(key);
         } else {

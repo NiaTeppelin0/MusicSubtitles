@@ -18,7 +18,12 @@
 
     let lastPushedText = '';
     let lastPushTime = 0;
+    let lastScanTime = 0;
     let transcriptSentForVideo = '';
+    let syncInFlight = false;
+    let noticeTimer = null;
+    let observedRoot = null;
+    let captionObserver = null;
 
     function getVideoId() {
         try {
@@ -36,11 +41,12 @@
 
     async function trySyncFullTranscript() {
         const vid = getVideoId();
-        if (!vid || vid === transcriptSentForVideo) return;
+        if (!vid || vid === transcriptSentForVideo || syncInFlight) return;
 
         const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         if (!player || typeof player.getOption !== 'function') return;
 
+        syncInFlight = true;
         try {
             const tracklist = player.getOption('captions', 'tracklist');
             if (!tracklist || tracklist.length === 0) return;
@@ -83,39 +89,56 @@
             }
         } catch {
             return;
+        } finally {
+            syncInFlight = false;
         }
     }
 
-    function setupCaptionObserver() {
-        const observer = new MutationObserver(() => {
-            const vid = getVideoId();
-            if (vid && vid === transcriptSentForVideo) return;
+    function checkLiveCaptions() {
+        const now = Date.now();
+        if (now - lastScanTime < 120) return;
+        lastScanTime = now;
 
-            const segments = document.querySelectorAll('.ytp-caption-segment');
-            if (!segments || segments.length === 0) return;
+        const vid = getVideoId();
+        if (vid && vid === transcriptSentForVideo) return;
 
-            const fullText = Array.from(segments).map(s => s.textContent).join(' ').trim();
-            const now = Date.now();
+        const root = observedRoot || document;
+        const segments = root.querySelectorAll('.ytp-caption-segment');
+        if (!segments || segments.length === 0) return;
 
-            if (fullText && fullText !== lastPushedText && (now - lastPushTime > 400)) {
-                lastPushedText = fullText;
-                lastPushTime = now;
+        const fullText = Array.from(segments).map(s => s.textContent).join(' ').trim();
+        if (fullText && fullText !== lastPushedText && (now - lastPushTime > 400)) {
+            lastPushedText = fullText;
+            lastPushTime = now;
 
-                fetch(PUSH_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        text: fullText,
-                        durationMs: 3800
-                    })
-                }).catch(() => {});
-            }
-        });
-
-        const target = document.body;
-        if (target) {
-            observer.observe(target, { childList: true, subtree: true, characterData: true });
+            fetch(PUSH_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: fullText,
+                    durationMs: 3800
+                })
+            }).catch(() => {});
         }
+    }
+
+    function bindCaptionObserverTarget() {
+        if (!captionObserver) return;
+        const playerRoot = document.querySelector('.ytp-caption-window-container')
+            || document.getElementById('movie_player')
+            || document.querySelector('.html5-video-player')
+            || document.body;
+        if (!playerRoot || playerRoot === observedRoot) return;
+        captionObserver.disconnect();
+        observedRoot = playerRoot;
+        captionObserver.observe(playerRoot, { childList: true, subtree: true, characterData: true });
+    }
+
+    function setupCaptionObserver() {
+        captionObserver = new MutationObserver(() => {
+            checkLiveCaptions();
+        });
+        bindCaptionObserverTarget();
     }
 
     function showSyncNotice(msg) {
@@ -146,15 +169,22 @@
         badge.appendChild(tag);
         badge.appendChild(document.createTextNode(` | ${msg}`));
         badge.style.opacity = '1';
-        setTimeout(() => {
+        if (noticeTimer) {
+            clearTimeout(noticeTimer);
+        }
+        noticeTimer = setTimeout(() => {
             if (badge) badge.style.opacity = '0';
         }, 5000);
     }
 
     setupCaptionObserver();
     window.addEventListener('yt-navigate-finish', () => {
+        bindCaptionObserverTarget();
         setTimeout(trySyncFullTranscript, 1200);
     });
-    setInterval(trySyncFullTranscript, 3500);
+    setInterval(() => {
+        bindCaptionObserverTarget();
+        trySyncFullTranscript();
+    }, 3500);
 
 })();

@@ -2,6 +2,7 @@ package com.example.yandexmusichud.twitch;
 
 import com.example.yandexmusichud.config.HudConfig;
 import com.example.yandexmusichud.texture.CoverTextureManager;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.ByteArrayInputStream;
@@ -13,10 +14,13 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 import net.minecraft.class_1011;
 import net.minecraft.class_1043;
 import net.minecraft.class_2561;
@@ -26,6 +30,11 @@ import net.minecraft.class_3417;
 
 public class TwitchManager {
     private static final TwitchManager INSTANCE = new TwitchManager();
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(7))
+            .build();
+    private static final Pattern LINE_SPLIT_PATTERN = Pattern.compile("\\r?\\n");
+    private static final Pattern TAG_SPLIT_PATTERN = Pattern.compile(";");
 
     public enum Status {
         DISCONNECTED("\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e", 0x777788),
@@ -42,13 +51,14 @@ public class TwitchManager {
         }
     }
 
-    private Status status = Status.DISCONNECTED;
-    private String lastErrorMessage = "";
-    private long lastPingTime = 0L;
-    private int pingLatencyMs = 0;
-    private WebSocket webSocket = null;
+    private volatile Status status = Status.DISCONNECTED;
+    private volatile String lastErrorMessage = "";
+    private volatile long lastPingTime = 0L;
+    private volatile int pingLatencyMs = 0;
+    private volatile WebSocket webSocket = null;
     private final AtomicBoolean isConnecting = new AtomicBoolean(false);
-    private String currentJoinedChannel = "";
+    private final AtomicInteger connectGeneration = new AtomicInteger(0);
+    private volatile String currentJoinedChannel = "";
 
     private static final class_2960 TWITCH_AVATAR_ID = class_2960.method_60655("yandexmusichud", "dynamic/twitch_avatar");
     private volatile boolean isLive = false;
@@ -117,57 +127,60 @@ public class TwitchManager {
 
         CompletableFuture.runAsync(() -> {
             try {
-                HttpClient client = HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(6))
-                        .build();
-
-                String query = "{\"query\":\"query { user(login: \\\"" + channel + "\\\") { id displayName profileImageURL(width: 70) stream { id type viewersCount title } } }\"}";
+                JsonObject vars = new JsonObject();
+                vars.addProperty("login", channel);
+                JsonObject payload = new JsonObject();
+                payload.addProperty("query", "query($login: String!) { user(login: $login) { id displayName profileImageURL(width: 70) stream { id type viewersCount title } } }");
+                payload.add("variables", vars);
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create("https://gql.twitch.tv/gql"))
                         .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
                         .header("Content-Type", "application/json")
                         .timeout(Duration.ofSeconds(6))
-                        .POST(HttpRequest.BodyPublishers.ofString(query))
+                        .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
                         .build();
 
                 long reqStart = System.currentTimeMillis();
-                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
                 this.pingLatencyMs = Math.max(1, (int)(System.currentTimeMillis() - reqStart));
                 if (response.statusCode() == 200) {
-                    JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
-                    if (root.has("data") && !root.get("data").isJsonNull()) {
-                        JsonObject data = root.getAsJsonObject("data");
-                        if (data.has("user") && !data.get("user").isJsonNull()) {
-                            JsonObject user = data.getAsJsonObject("user");
-                            if (user.has("displayName") && !user.get("displayName").isJsonNull()) {
-                                this.channelDisplayName = user.get("displayName").getAsString();
-                            }
-                            String avatarUrl = user.has("profileImageURL") && !user.get("profileImageURL").isJsonNull()
-                                    ? user.get("profileImageURL").getAsString() : "";
-                            if (!avatarUrl.isEmpty() && !avatarUrl.equals(this.lastAvatarUrl)) {
-                                this.lastAvatarUrl = avatarUrl;
-                                loadAvatarTexture(avatarUrl);
-                            }
-                            boolean wasLive = this.isLive;
-                            boolean nowLive = false;
-                            if (user.has("stream") && !user.get("stream").isJsonNull()) {
-                                JsonObject stream = user.getAsJsonObject("stream");
-                                String type = stream.has("type") && !stream.get("type").isJsonNull() ? stream.get("type").getAsString() : "";
-                                nowLive = "live".equalsIgnoreCase(type);
-                                this.viewersCount = stream.has("viewersCount") && !stream.get("viewersCount").isJsonNull() ? stream.get("viewersCount").getAsInt() : 0;
-                                this.streamTitle = stream.has("title") && !stream.get("title").isJsonNull() ? stream.get("title").getAsString() : "";
+                    JsonElement parsed = JsonParser.parseString(response.body());
+                    if (parsed.isJsonObject()) {
+                        JsonObject root = parsed.getAsJsonObject();
+                        if (root.has("data") && root.get("data").isJsonObject()) {
+                            JsonObject data = root.getAsJsonObject("data");
+                            if (data.has("user") && data.get("user").isJsonObject()) {
+                                JsonObject user = data.getAsJsonObject("user");
+                                if (user.has("displayName") && user.get("displayName").isJsonPrimitive()) {
+                                    this.channelDisplayName = user.get("displayName").getAsString();
+                                }
+                                String avatarUrl = user.has("profileImageURL") && user.get("profileImageURL").isJsonPrimitive()
+                                        ? user.get("profileImageURL").getAsString() : "";
+                                if (!avatarUrl.isEmpty() && !avatarUrl.equals(this.lastAvatarUrl)) {
+                                    this.lastAvatarUrl = avatarUrl;
+                                    loadAvatarTexture(avatarUrl);
+                                }
+                                boolean wasLive = this.isLive;
+                                boolean nowLive = false;
+                                if (user.has("stream") && user.get("stream").isJsonObject()) {
+                                    JsonObject stream = user.getAsJsonObject("stream");
+                                    String type = stream.has("type") && stream.get("type").isJsonPrimitive() ? stream.get("type").getAsString() : "";
+                                    nowLive = "live".equalsIgnoreCase(type);
+                                    this.viewersCount = stream.has("viewersCount") && stream.get("viewersCount").isJsonPrimitive() ? stream.get("viewersCount").getAsInt() : 0;
+                                    this.streamTitle = stream.has("title") && stream.get("title").isJsonPrimitive() ? stream.get("title").getAsString() : "";
+                                } else {
+                                    this.viewersCount = 0;
+                                    this.streamTitle = "";
+                                }
+                                this.isLive = nowLive;
+                                if (!wasLive && nowLive) {
+                                    onStreamStarted();
+                                }
                             } else {
+                                this.isLive = false;
                                 this.viewersCount = 0;
                                 this.streamTitle = "";
                             }
-                            this.isLive = nowLive;
-                            if (!wasLive && nowLive) {
-                                onStreamStarted();
-                            }
-                        } else {
-                            this.isLive = false;
-                            this.viewersCount = 0;
-                            this.streamTitle = "";
                         }
                     }
                 }
@@ -180,36 +193,53 @@ public class TwitchManager {
 
     private void loadAvatarTexture(String url) {
         CompletableFuture.runAsync(() -> {
+            class_1011 image = null;
+            boolean handedOff = false;
             try {
-                HttpClient client = HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(6))
-                        .build();
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .timeout(Duration.ofSeconds(8))
                         .GET()
                         .build();
-                HttpResponse<byte[]> res = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
+                HttpResponse<byte[]> res = SHARED_HTTP_CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
                 if (res.statusCode() == 200) {
                     byte[] bytes = res.body();
-                    class_1011 image = class_1011.method_4309(new ByteArrayInputStream(bytes));
-                    if (image != null) {
+                    image = class_1011.method_4309(new ByteArrayInputStream(bytes));
+                    class_310 mc = class_310.method_1551();
+                    if (image != null && mc != null) {
                         int r = Math.min(image.method_4307(), image.method_4323()) / 2;
                         CoverTextureManager.roundImageCorners(image, r);
-
-                        class_310.method_1551().execute(() -> {
+                        final class_1011 finalImage = image;
+                        handedOff = true;
+                        mc.execute(() -> {
+                            boolean registered = false;
                             try {
                                 if (this.hasCustomAvatar) {
-                                    class_310.method_1551().method_1531().method_4615(TWITCH_AVATAR_ID);
+                                    mc.method_1531().method_4615(TWITCH_AVATAR_ID);
                                 }
-                                class_1043 texture = new class_1043(() -> "twitch_avatar", image);
-                                class_310.method_1551().method_1531().method_4616(TWITCH_AVATAR_ID, texture);
+                                class_1043 texture = new class_1043(() -> "twitch_avatar", finalImage);
+                                mc.method_1531().method_4616(TWITCH_AVATAR_ID, texture);
                                 this.hasCustomAvatar = true;
-                            } catch (Exception ignored) {}
+                                registered = true;
+                            } catch (Exception ignored) {
+                            } finally {
+                                if (!registered) {
+                                    try {
+                                        finalImage.close();
+                                    } catch (Exception ignored2) {}
+                                }
+                            }
                         });
                     }
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            } finally {
+                if (!handedOff && image != null) {
+                    try {
+                        image.close();
+                    } catch (Exception ignored) {}
+                }
+            }
         });
     }
 
@@ -245,13 +275,24 @@ public class TwitchManager {
         this.disconnectInternal();
     }
 
+    public synchronized void shutdown() {
+        this.disconnect();
+    }
+
     private synchronized void disconnectInternal() {
-        if (this.webSocket != null) {
+        this.connectGeneration.incrementAndGet();
+        WebSocket oldSocket = this.webSocket;
+        this.webSocket = null;
+        if (oldSocket != null) {
             try {
-                this.webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Goodbye");
-            } catch (Exception ignored) {}
-            this.webSocket = null;
+                oldSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Goodbye");
+            } catch (Exception ignored) {
+                try {
+                    oldSocket.abort();
+                } catch (Exception ignored2) {}
+            }
         }
+        this.isConnecting.set(false);
         this.status = Status.DISCONNECTED;
         this.currentJoinedChannel = "";
         this.isLive = false;
@@ -260,21 +301,34 @@ public class TwitchManager {
     }
 
     private void connect(String channel) {
+        if (this.manualDisconnect || !HudConfig.INSTANCE.twitchEnabled) {
+            return;
+        }
         if (this.isConnecting.getAndSet(true)) return;
+        final int gen = this.connectGeneration.incrementAndGet();
         this.status = Status.CONNECTING;
         this.lastErrorMessage = "";
 
         CompletableFuture.runAsync(() -> {
             try {
-                HttpClient client = HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(7))
-                        .build();
+                if (gen != this.connectGeneration.get() || this.manualDisconnect || !HudConfig.INSTANCE.twitchEnabled) {
+                    this.isConnecting.set(false);
+                    return;
+                }
 
                 WebSocket.Listener listener = new WebSocket.Listener() {
                     private final StringBuilder buffer = new StringBuilder();
 
                     @Override
                     public void onOpen(WebSocket ws) {
+                        if (gen != connectGeneration.get() || manualDisconnect || !HudConfig.INSTANCE.twitchEnabled) {
+                            isConnecting.set(false);
+                            try {
+                                ws.abort();
+                            } catch (Exception ignored) {}
+                            return;
+                        }
+                        webSocket = ws;
                         status = Status.CONNECTED;
                         currentJoinedChannel = channel;
                         isConnecting.set(false);
@@ -282,7 +336,7 @@ public class TwitchManager {
                         ws.sendText("CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership\r\n", true);
                         ws.sendText("PASS oauth:justinfan" + (10000 + (int)(Math.random() * 89999)) + "\r\n", true);
                         ws.sendText("NICK justinfan" + (10000 + (int)(Math.random() * 89999)) + "\r\n", true);
-                        ws.sendText("JOIN #" + channel.toLowerCase() + "\r\n", true);
+                        ws.sendText("JOIN #" + channel.toLowerCase(Locale.ROOT) + "\r\n", true);
 
                         checkLiveStatus(channel);
 
@@ -292,6 +346,9 @@ public class TwitchManager {
 
                     @Override
                     public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
+                        if (gen != connectGeneration.get()) {
+                            return WebSocket.Listener.super.onText(ws, data, last);
+                        }
                         this.buffer.append(data);
                         if (last) {
                             String message = this.buffer.toString();
@@ -303,44 +360,64 @@ public class TwitchManager {
 
                     @Override
                     public CompletionStage<?> onClose(WebSocket ws, int statusCode, String reason) {
-                        status = Status.DISCONNECTED;
-                        isConnecting.set(false);
-                        lastReconnectAttemptTime = System.currentTimeMillis();
+                        if (gen == connectGeneration.get()) {
+                            if (webSocket == ws) {
+                                webSocket = null;
+                            }
+                            status = Status.DISCONNECTED;
+                            isConnecting.set(false);
+                            lastReconnectAttemptTime = System.currentTimeMillis();
+                        }
                         return WebSocket.Listener.super.onClose(ws, statusCode, reason);
                     }
 
                     @Override
                     public void onError(WebSocket ws, Throwable error) {
-                        status = Status.ERROR;
-                        lastErrorMessage = error.getMessage() != null ? error.getMessage() : "Connection failed";
-                        isConnecting.set(false);
-                        lastReconnectAttemptTime = System.currentTimeMillis();
+                        if (gen == connectGeneration.get()) {
+                            if (webSocket == ws) {
+                                webSocket = null;
+                            }
+                            status = Status.ERROR;
+                            lastErrorMessage = error.getMessage() != null ? error.getMessage() : "Connection failed";
+                            isConnecting.set(false);
+                            lastReconnectAttemptTime = System.currentTimeMillis();
+                        }
                     }
                 };
 
-                client.newWebSocketBuilder()
+                SHARED_HTTP_CLIENT.newWebSocketBuilder()
                         .connectTimeout(Duration.ofSeconds(8))
                         .buildAsync(URI.create("wss://irc-ws.chat.twitch.tv:443"), listener)
                         .thenAccept(ws -> {
-                            this.webSocket = ws;
+                            if (gen != this.connectGeneration.get() || this.manualDisconnect || !HudConfig.INSTANCE.twitchEnabled) {
+                                try {
+                                    ws.abort();
+                                } catch (Exception ignored) {}
+                            } else {
+                                this.webSocket = ws;
+                            }
                         }).exceptionally(ex -> {
-                            this.status = Status.ERROR;
-                            this.lastErrorMessage = ex.getMessage();
-                            this.isConnecting.set(false);
-                            this.lastReconnectAttemptTime = System.currentTimeMillis();
+                            if (gen == this.connectGeneration.get()) {
+                                this.status = Status.ERROR;
+                                this.lastErrorMessage = ex.getMessage();
+                                this.isConnecting.set(false);
+                                this.lastReconnectAttemptTime = System.currentTimeMillis();
+                            }
                             return null;
                         });
             } catch (Exception e) {
-                this.status = Status.ERROR;
-                this.lastErrorMessage = e.getMessage();
-                this.isConnecting.set(false);
-                this.lastReconnectAttemptTime = System.currentTimeMillis();
+                if (gen == this.connectGeneration.get()) {
+                    this.status = Status.ERROR;
+                    this.lastErrorMessage = e.getMessage();
+                    this.isConnecting.set(false);
+                    this.lastReconnectAttemptTime = System.currentTimeMillis();
+                }
             }
         });
     }
 
     private void handleIrcMessage(WebSocket ws, String raw) {
-        String[] lines = raw.split("\r?\n");
+        String[] lines = LINE_SPLIT_PATTERN.split(raw);
         for (String line : lines) {
             if (line.isEmpty()) continue;
 
@@ -372,7 +449,7 @@ public class TwitchManager {
                 String tagPart = line.substring(1, spaceIdx);
                 rest = line.substring(spaceIdx + 1);
 
-                String[] tagPairs = tagPart.split(";");
+                String[] tagPairs = TAG_SPLIT_PATTERN.split(tagPart);
                 for (String pair : tagPairs) {
                     int eq = pair.indexOf('=');
                     if (eq > 0) {
@@ -462,7 +539,9 @@ public class TwitchManager {
             class_310 mc = class_310.method_1551();
             if (mc != null && mc.field_1724 != null) {
                 mc.execute(() -> {
-                    mc.field_1724.method_5783(class_3417.field_14709, 0.7f, 1.3f);
+                    if (mc.field_1724 != null) {
+                        mc.field_1724.method_5783(class_3417.field_14709, 0.7f, 1.3f);
+                    }
                 });
             }
         } catch (Exception ignored) {}
@@ -508,7 +587,7 @@ public class TwitchManager {
 
     public static String cleanChannelName(String input) {
         if (input == null) return "";
-        String s = input.trim().toLowerCase();
+        String s = input.trim().toLowerCase(Locale.ROOT);
         if (s.startsWith("https://")) s = s.substring(8);
         if (s.startsWith("http://")) s = s.substring(7);
         if (s.startsWith("www.")) s = s.substring(4);

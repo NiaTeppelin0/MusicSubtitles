@@ -43,6 +43,14 @@ public class LyricEditorScreen extends class_437 {
 
     private static final class_2960 TEX_DRUM_DEPTH = class_2960.method_60655("yandexmusichud", "textures/gui/editor/drum_depth.png");
     private static final class_2960 TEX_DRUM_DEPTH_BOTTOM = class_2960.method_60655("yandexmusichud", "textures/gui/editor/drum_depth_bottom.png");
+    private static final Pattern AMP_HEX_PATTERN = Pattern.compile("&#[0-9a-fA-F]{6}");
+    private static final Pattern ANGLE_HEX_PATTERN = Pattern.compile("<#[0-9a-fA-F]{6}>");
+    private static final Pattern AMP_CODE_PATTERN = Pattern.compile("&[0-9a-fA-FklmnorKLMNOR]");
+    private static final Pattern SECT_CODE_PATTERN = Pattern.compile("\u00a7[0-9a-fA-FklmnorKLMNOR]");
+    private static final Pattern FONT_ANGLE_PATTERN = Pattern.compile("<font:[^>]+>");
+    private static final Pattern FONT_BRACKET_PATTERN = Pattern.compile("\\[font=[^\\]]+\\]");
+    private static final Pattern ANIM_OPEN_PATTERN = Pattern.compile("<anim:[^>]+>");
+    private static final Pattern WHITESPACE_SPLIT_PATTERN = Pattern.compile("\\s+");
     private static final class_2960 TEX_SOUNDWAVE = class_2960.method_60655("yandexmusichud", "textures/gui/editor/soundwave.png");
 
     private static final String[][] FONT_PRESETS = {
@@ -127,7 +135,7 @@ public class LyricEditorScreen extends class_437 {
 
         this.initialSnapshotLines.clear();
         if (HudConfig.INSTANCE.trackStyles != null) {
-            this.initialStyleRaw = HudConfig.INSTANCE.trackStyles.get((this.trackArtist + "___" + this.trackTitle).toLowerCase());
+            this.initialStyleRaw = HudConfig.INSTANCE.trackStyles.get((this.trackArtist + "___" + this.trackTitle).toLowerCase(Locale.ROOT));
         }
         if (activeLyrics != null && !activeLyrics.isEmpty()) {
             this.initialSnapshotLines.addAll(activeLyrics);
@@ -474,7 +482,7 @@ public class LyricEditorScreen extends class_437 {
         if (this.selectedWordIndex >= 0 && this.selectedWordIndex < this.currentWordChips.size()) {
             WordChip chip = this.currentWordChips.get(this.selectedWordIndex);
             String wordText = line.text.substring(chip.start, chip.end);
-            String cleanWord = wordText.replaceAll("<anim:[^>]+>", "").replaceAll("</anim>", "");
+            String cleanWord = ANIM_OPEN_PATTERN.matcher(wordText).replaceAll("").replace("</anim>", "");
             String replaced = "<anim:" + animName + ">" + cleanWord + "</anim>";
             line.text = line.text.substring(0, chip.start) + replaced + line.text.substring(chip.end);
             this.updateFieldText();
@@ -536,26 +544,25 @@ public class LyricEditorScreen extends class_437 {
 
     private static String stripColorFormatting(String str) {
         if (str == null) return "";
-        return str.replaceAll("&#[0-9a-fA-F]{6}", "")
-                  .replaceAll("<#[0-9a-fA-F]{6}>", "")
-                  .replaceAll("</#>", "")
-                  .replaceAll("&[0-9a-fA-FklmnorKLMNOR]", "")
-                  .replaceAll("\u00a7[0-9a-fA-FklmnorKLMNOR]", "");
+        String s = AMP_HEX_PATTERN.matcher(str).replaceAll("");
+        s = ANGLE_HEX_PATTERN.matcher(s).replaceAll("");
+        s = s.replace("</#>", "");
+        s = AMP_CODE_PATTERN.matcher(s).replaceAll("");
+        return SECT_CODE_PATTERN.matcher(s).replaceAll("");
     }
 
     private static String stripFontFormatting(String str) {
         if (str == null) return "";
-        return str.replaceAll("<font:[^>]+>", "")
-                  .replaceAll("</font>", "")
-                  .replaceAll("\\[font=[^\\]]+\\]", "")
-                  .replaceAll("\\[/font\\]", "");
+        String s = FONT_ANGLE_PATTERN.matcher(str).replaceAll("");
+        s = s.replace("</font>", "");
+        s = FONT_BRACKET_PATTERN.matcher(s).replaceAll("");
+        return s.replace("[/font]", "");
     }
 
     public static String stripAllFormatting(String str) {
         if (str == null) return "";
-        return stripFontFormatting(stripColorFormatting(str))
-            .replaceAll("<anim:[^>]+>", "")
-            .replaceAll("</anim>", "");
+        String s = stripFontFormatting(stripColorFormatting(str));
+        return ANIM_OPEN_PATTERN.matcher(s).replaceAll("").replace("</anim>", "");
     }
 
     private void insertTag(String prefix, String suffix) {
@@ -694,7 +701,7 @@ public class LyricEditorScreen extends class_437 {
         if (trimmed.isEmpty()) {
             return new String[0];
         }
-        return trimmed.split("\\s+");
+        return WHITESPACE_SPLIT_PATTERN.split(trimmed);
     }
 
     private static String plainToken(String rawToken) {
@@ -832,7 +839,7 @@ public class LyricEditorScreen extends class_437 {
 
         HudConfig.INSTANCE.setTrackStyle(this.trackArtist, this.trackTitle, this.customColor, this.customActiveColor, this.customMode, this.customScale, this.customFont);
         HudConfig.save();
-        this.initialStyleRaw = HudConfig.INSTANCE.trackStyles != null ? HudConfig.INSTANCE.trackStyles.get((this.trackArtist + "___" + this.trackTitle).toLowerCase()) : null;
+        this.initialStyleRaw = HudConfig.INSTANCE.trackStyles != null ? HudConfig.INSTANCE.trackStyles.get((this.trackArtist + "___" + this.trackTitle).toLowerCase(Locale.ROOT)) : null;
 
         this.feedbackToast = "Субтитры, шрифты и стили успешно сохранены!";
         this.feedbackToastTime = System.currentTimeMillis();
@@ -863,7 +870,7 @@ public class LyricEditorScreen extends class_437 {
 
     private void revertUnsavedPreview() {
         this.previewDirty = false;
-        String styleKey = (this.trackArtist + "___" + this.trackTitle).toLowerCase();
+        String styleKey = (this.trackArtist + "___" + this.trackTitle).toLowerCase(Locale.ROOT);
         if (HudConfig.INSTANCE.trackStyles != null) {
             if (this.initialStyleRaw != null) {
                 HudConfig.INSTANCE.trackStyles.put(styleKey, this.initialStyleRaw);
@@ -1194,7 +1201,7 @@ public class LyricEditorScreen extends class_437 {
 
             int tagW = tr.method_1727(timeTag);
             int maxTxtW = centerW - tagW - 48;
-            String cleanReel = LyricLine.toMinecraftFormatting(stripFontFormatting(el.text).replaceAll("<anim:[^>]+>", "").replaceAll("</anim>", ""));
+            String cleanReel = LyricLine.toMinecraftFormatting(ANIM_OPEN_PATTERN.matcher(stripFontFormatting(el.text)).replaceAll("").replace("</anim>", ""));
             String trimmedTxt = tr.method_27523(cleanReel, maxTxtW);
 
             int itemDrawY = (int)lineY - 4;

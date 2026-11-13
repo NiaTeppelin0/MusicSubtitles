@@ -469,7 +469,7 @@ public class TwitchSettingsScreen extends class_437 {
 
             String descLine = tm.isLive() && !tm.getStreamTitle().isEmpty()
                     ? "\u00a7e" + tm.getStreamTitle()
-                    : "\u00a78#" + (curChan != null ? curChan.toLowerCase() : "");
+                    : "\u00a78#" + (curChan != null ? curChan.toLowerCase(java.util.Locale.ROOT) : "");
             descLine = trimText(this.field_22793, descLine, maxNameW);
             context.method_51433(this.field_22793, descLine, infoX, avY + 21, alphaInt << 24 | 0xCCDDEE, false);
 

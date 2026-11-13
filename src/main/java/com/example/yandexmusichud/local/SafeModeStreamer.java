@@ -20,8 +20,9 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.fabricmc.loader.api.FabricLoader;
@@ -35,8 +36,14 @@ public class SafeModeStreamer {
         .followRedirects(HttpClient.Redirect.ALWAYS)
         .build();
 
+    private static final Pattern ID_JSON_PATTERN = Pattern.compile("\"id\"\\s*:\\s*([0-9]+)");
+    private static final Pattern COVER_URI_PATTERN = Pattern.compile("\"coverUri\"\\s*:\\s*\"([^\"]+)\"");
+    private static final Pattern YANDEX_TOKEN_PATTERN = Pattern.compile("y0_[a-zA-Z0-9_-]{20,}");
+    private static final Pattern INVALID_FILENAME_PATTERN = Pattern.compile("[\\\\/:*?\"<>|]");
+
     private volatile String currentQuery = "";
-    private final AtomicBoolean isFetching = new AtomicBoolean(false);
+    private volatile String inFlightQuery = "";
+    private final AtomicInteger fetchGeneration = new AtomicInteger(0);
 
     private SafeModeStreamer() {}
 
@@ -51,11 +58,13 @@ public class SafeModeStreamer {
 
         String artist = state.artist().trim();
         String title = state.title().trim();
-        String queryKey = (artist + " - " + title).toLowerCase();
-        if (queryKey.equals(this.currentQuery) && this.isFetching.get()) {
+        String queryKey = (artist + " - " + title).toLowerCase(Locale.ROOT);
+        if (queryKey.equals(this.currentQuery) && queryKey.equals(this.inFlightQuery)) {
             return;
         }
         this.currentQuery = queryKey;
+        this.inFlightQuery = queryKey;
+        int gen = this.fetchGeneration.incrementAndGet();
 
         Path cacheDir = FabricLoader.getInstance().getConfigDir().resolve("yandexmusichud").resolve("cache");
         try {
@@ -93,7 +102,6 @@ public class SafeModeStreamer {
         }
 
         this.sendChatMessage("§b♫ [Безопасный режим] §7Поиск и авто-стриминг трека: §f\"" + artist + " - " + title + "\"§7...");
-        this.isFetching.set(true);
 
         String explicitDirectUrl = state.directUrl();
         String explicitCoverUrl = state.coverUrl();
@@ -118,7 +126,7 @@ public class SafeModeStreamer {
                 if (!success) {
                     success = this.searchAndDownload(artist, title, cachedFile, coverFile, queryKey);
                 }
-                if (success && queryKey.equals(this.currentQuery)) {
+                if (success && gen == this.fetchGeneration.get() && queryKey.equals(this.currentQuery)) {
                     this.sendChatMessage("§b♫ [Безопасный режим] §aТрек получен! Воспроизведение синхронизировано.");
                     byte[] coverBytes = null;
                     if (Files.exists(coverFile)) {
@@ -134,11 +142,13 @@ public class SafeModeStreamer {
                     if (coverBytes != null && coverBytes.length > 0) {
                         this.applyCover(coverBytes);
                     }
-                } else if (!success && queryKey.equals(this.currentQuery)) {
+                } else if (!success && gen == this.fetchGeneration.get() && queryKey.equals(this.currentQuery)) {
                     this.sendChatMessage("§b♫ [Безопасный режим] §cНе удалось найти трек в сети. Добавьте его в папку музыки вручную.");
                 }
             } finally {
-                this.isFetching.set(false);
+                if (gen == this.fetchGeneration.get()) {
+                    this.inFlightQuery = "";
+                }
             }
         });
     }
@@ -180,16 +190,14 @@ public class SafeModeStreamer {
             }
 
             String searchBody = respSearch.body();
-            Pattern pId = Pattern.compile("\"id\"\\s*:\\s*([0-9]+)");
-            Matcher mId = pId.matcher(searchBody);
+            Matcher mId = ID_JSON_PATTERN.matcher(searchBody);
             if (!mId.find()) {
                 return null;
             }
             String trackId = mId.group(1);
 
             String coverUrl = null;
-            Pattern pCover = Pattern.compile("\"coverUri\"\\s*:\\s*\"([^\"]+)\"");
-            Matcher mCover = pCover.matcher(searchBody);
+            Matcher mCover = COVER_URI_PATTERN.matcher(searchBody);
             if (mCover.find()) {
                 coverUrl = "https://" + mCover.group(1).replace("%%", "200x200");
             }
@@ -286,7 +294,6 @@ public class SafeModeStreamer {
             if (appData != null) {
                 Path leveldbDir = Path.of(appData, "YandexMusic", "Local Storage", "leveldb");
                 if (Files.exists(leveldbDir)) {
-                    Pattern p = Pattern.compile("y0_[a-zA-Z0-9_-]{20,}");
                     try (var stream = Files.list(leveldbDir)) {
                         for (Path f : stream.toList()) {
                             String fn = f.getFileName().toString();
@@ -294,7 +301,7 @@ public class SafeModeStreamer {
                                 try {
                                     byte[] bytes = Files.readAllBytes(f);
                                     String s = new String(bytes, StandardCharsets.ISO_8859_1);
-                                    Matcher m = p.matcher(s);
+                                    Matcher m = YANDEX_TOKEN_PATTERN.matcher(s);
                                     if (m.find()) {
                                         String found = m.group();
                                         if (HudConfig.INSTANCE != null) {
@@ -395,11 +402,12 @@ public class SafeModeStreamer {
     }
 
     private boolean downloadDirectStream(String directUrl, Path targetFile, String expectedQuery) {
+        Path partFile = targetFile.resolveSibling(targetFile.getFileName().toString() + ".part");
+        boolean moved = false;
         try {
             if (!expectedQuery.equals(this.currentQuery)) {
                 return false;
             }
-            Path partFile = targetFile.resolveSibling(targetFile.getFileName().toString() + ".part");
             HttpRequest audioReq = HttpRequest.newBuilder()
                 .uri(URI.create(directUrl))
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
@@ -427,10 +435,18 @@ public class SafeModeStreamer {
                 }
                 if (Files.exists(partFile) && Files.size(partFile) > 600000L) {
                     Files.move(partFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
+                    moved = true;
                     return true;
                 }
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        } finally {
+            if (!moved) {
+                try {
+                    Files.deleteIfExists(partFile);
+                } catch (Throwable ignored) {}
+            }
+        }
         return false;
     }
 
@@ -446,22 +462,32 @@ public class SafeModeStreamer {
     }
 
     private String extractXmlTag(String xml, String tag) {
-        Pattern p = Pattern.compile("<" + tag + ">([^<]+)</" + tag + ">");
-        Matcher m = p.matcher(xml);
-        return m.find() ? m.group(1) : "";
+        String open = "<" + tag + ">";
+        String close = "</" + tag + ">";
+        int start = xml.indexOf(open);
+        if (start < 0) {
+            return "";
+        }
+        start += open.length();
+        int end = xml.indexOf(close, start);
+        return end > start ? xml.substring(start, end) : "";
     }
 
     private String sanitizeFileName(String name) {
         if (name == null) {
             return "track";
         }
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        return INVALID_FILENAME_PATTERN.matcher(name).replaceAll("_").trim();
     }
 
     private void sendChatMessage(String message) {
         class_310 mc = class_310.method_1551();
-        if (mc != null && mc.field_1724 != null) {
-            mc.field_1724.method_7353(class_2561.method_43470(message), false);
+        if (mc != null) {
+            mc.execute(() -> {
+                if (mc.field_1724 != null) {
+                    mc.field_1724.method_7353(class_2561.method_43470(message), false);
+                }
+            });
         }
     }
 }

@@ -23,7 +23,7 @@ public class TwitchAlertBanner {
         if (!HudConfig.INSTANCE.twitchEnabled) {
             return;
         }
-        this.renderInScreen(context, screenW, screenH, now);
+        this.renderInScreen(context, screenW, screenH, now, false);
     }
 
     public void render(class_332 context, int baseW, int baseH, int hudAlpha, long now) {
@@ -31,14 +31,21 @@ public class TwitchAlertBanner {
     }
 
     public void render(class_332 context, int baseW, int baseH, int hudAlpha, long now, int cardScreenX, int screenWidth, float scale) {
-        int screenW = screenWidth > 0 ? screenWidth : class_310.method_1551().method_22683().method_4486();
-        int screenH = class_310.method_1551().method_22683().method_4502();
+        class_310 mc = class_310.method_1551();
+        int screenW = screenWidth > 0 ? screenWidth : (mc != null && mc.method_22683() != null ? mc.method_22683().method_4486() : baseW);
+        int screenH = mc != null && mc.method_22683() != null ? mc.method_22683().method_4502() : baseH;
         this.render(context, screenW, screenH, now);
     }
 
     public void renderInScreen(class_332 context, int screenW, int screenH, long now) {
+        this.renderInScreen(context, screenW, screenH, now, true);
+    }
+
+    private void renderInScreen(class_332 context, int screenW, int screenH, long now, boolean tickQueue) {
         TwitchAlertQueue queue = TwitchAlertQueue.INSTANCE;
-        queue.update();
+        if (tickQueue) {
+            queue.update();
+        }
 
         if (!queue.isShowing()) {
             return;

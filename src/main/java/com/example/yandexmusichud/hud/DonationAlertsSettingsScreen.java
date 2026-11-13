@@ -21,6 +21,7 @@ import net.minecraft.class_437;
 import org.lwjgl.glfw.GLFW;
 
 public class DonationAlertsSettingsScreen extends class_437 {
+    private static final java.util.regex.Pattern NON_DIGIT_PATTERN = java.util.regex.Pattern.compile("[^0-9]");
     private static final class_2960 DA_ICON = class_2960.method_60655("yandexmusichud", "textures/gui/donationalerts_icon.png");
     private final class_437 parent;
     private final DonationAlertsLogoMergeAnimation introAnim;
@@ -234,7 +235,7 @@ public class DonationAlertsSettingsScreen extends class_437 {
                 (class_2561)class_2561.method_43470("Min Amount"));
         this.minAmountField.method_1852(String.valueOf(HudConfig.INSTANCE.daMinAmountAlert));
         this.minAmountField.method_1863(text -> {
-            String digits = text.replaceAll("[^0-9]", "");
+            String digits = NON_DIGIT_PATTERN.matcher(text).replaceAll("");
             int val = 0;
             if (!digits.isEmpty()) {
                 try {
@@ -399,7 +400,7 @@ public class DonationAlertsSettingsScreen extends class_437 {
             } else if (status == DonationAlertsManager.Status.ERROR) {
                 String err = dam.getLastErrorMessage();
                 if (err != null && !err.isEmpty() && err.length() <= 24) {
-                    statusBadge = "\u00a7c\u25cf " + err.toUpperCase();
+                    statusBadge = "\u00a7c\u25cf " + err.toUpperCase(java.util.Locale.ROOT);
                 } else {
                     statusBadge = "\u00a7c\u25cf \u041e\u0428\u0418\u0411\u041a\u0410";
                 }

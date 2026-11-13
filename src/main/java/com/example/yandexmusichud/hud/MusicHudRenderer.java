@@ -23,6 +23,39 @@ import net.minecraft.class_3532;
 import net.minecraft.class_9779;
 
 public class MusicHudRenderer {
+    private static final int MAX_PRECOMPUTED_RADIUS = 64;
+    private static final int[][] ROUND_DX = new int[MAX_PRECOMPUTED_RADIUS + 1][];
+
+    static {
+        for (int r = 1; r <= MAX_PRECOMPUTED_RADIUS; ++r) {
+            int[] row = new int[r];
+            double rr = (double)r * (double)r;
+            for (int i = 0; i < r; ++i) {
+                double d = (double)r - (double)i - 0.5;
+                row[i] = (int)Math.round((double)r - Math.sqrt(Math.max(0.0, rr - d * d)));
+            }
+            ROUND_DX[r] = row;
+        }
+    }
+
+    private static int getRoundDx(int radius, int index) {
+        if (radius <= 0 || index < 0 || index >= radius) {
+            return 0;
+        }
+        if (radius <= MAX_PRECOMPUTED_RADIUS) {
+            return ROUND_DX[radius][index];
+        }
+        double d = (double)radius - (double)index - 0.5;
+        return (int)Math.round((double)radius - Math.sqrt(Math.max(0.0, (double)radius * (double)radius - d * d)));
+    }
+
+    private static String formatSpeed(float speed, boolean withSpace) {
+        int hundredths = Math.round(speed * 100.0f);
+        int whole = hundredths / 100;
+        int frac = Math.abs(hundredths % 100);
+        return (withSpace ? "⚡ " : "⚡") + whole + (frac < 10 ? ".0" : ".") + frac + "x";
+    }
+
     private final NowPlayingClient client;
     private final CoverTextureManager coverManager;
     private static final class_2960 TWITCH_ICON = class_2960.method_60655("yandexmusichud", "textures/gui/twitch_icon.png");
@@ -33,12 +66,18 @@ public class MusicHudRenderer {
     private float vinylSlideProgress = 0.0f;
     private float vinylRotationAngle = 0.0f;
     private float hoverControlsAlpha = 0.0f;
+    private float lastFrameDt = 0.016f;
     private long lastActiveTime = 0L;
     private long marqueeStartTime = 0L;
     private long popupStartTime = 0L;
     private String lastTitle = "";
     private String lastArtist = "";
     private boolean lastWasPlaying = false;
+    private long lastTimePosSec = -1L;
+    private long lastTimeDurSec = -1L;
+    private String lastTimePairStr = "0:00 / 0:00";
+    private long lastSingleTimeSec = -1L;
+    private String lastSingleTimeStr = "0:00";
     private int cachedX;
     private int cachedY;
     public static int lastCancelBtnScreenX = 0;
@@ -184,6 +223,7 @@ public class MusicHudRenderer {
             }
         }
         float dt = this.lastRenderTime > 0L ? Math.min(0.08f, (float)(now - this.lastRenderTime) / 1000.0f) : 0.016f;
+        this.lastFrameDt = dt;
         this.lastRenderTime = now;
         float lerpFactor = Math.min(1.0f, dt * (hasTwitchAlert ? 14.0f : 8.5f));
         this.currentAlpha += (targetAlpha - this.currentAlpha) * lerpFactor;
@@ -343,7 +383,7 @@ public class MusicHudRenderer {
     }
 
     private void renderBackground(class_332 context, int alpha, int baseW, int baseH, boolean mirrorLayout) {
-        String style = HudConfig.INSTANCE.hudStyle != null ? HudConfig.INSTANCE.hudStyle.toUpperCase() : "MINIMAL_DARK";
+        String style = HudConfig.INSTANCE.hudStyle != null ? HudConfig.INSTANCE.hudStyle.toUpperCase(java.util.Locale.ROOT) : "MINIMAL_DARK";
         class_2960 customBg = CustomBackgroundManager.INSTANCE.getBackgroundTexture();
         int r = MusicHudRenderer.getEffectiveRadius(style, baseH);
         int rawDom = this.coverManager.getSmoothDominantColor() & 0xFFFFFF;
@@ -455,8 +495,7 @@ public class MusicHudRenderer {
             int topPad = 1;
             int distEdge = fromRight ? (x + width - sx2) : (sx1 - x);
             if (safeR > 0 && distEdge < safeR) {
-                double dx = (double)safeR - (double)distEdge - 0.5;
-                topPad = Math.max(1, (int)Math.round((double)safeR - Math.sqrt(Math.max(0.0, (double)(safeR * safeR) - dx * dx))));
+                topPad = Math.max(1, MusicHudRenderer.getRoundDx(safeR, distEdge));
             }
             int sy1 = y + topPad;
             int sy2 = y + height - topPad;
@@ -492,8 +531,7 @@ public class MusicHudRenderer {
         radius = Math.min(radius, Math.min(width / 2, height / 2));
         context.method_25294(x, y + radius, x + width, y + height - radius, argbColor);
         for (int i = 0; i < radius; ++i) {
-            double dy = (double)radius - (double)i - 0.5;
-            int dx = (int)Math.round((double)radius - Math.sqrt(Math.max(0.0, (double)(radius * radius) - dy * dy)));
+            int dx = MusicHudRenderer.getRoundDx(radius, i);
             context.method_25294(x + dx, y + i, x + width - dx, y + i + 1, argbColor);
             context.method_25294(x + dx, y + height - 1 - i, x + width - dx, y + height - i, argbColor);
         }
@@ -519,8 +557,7 @@ public class MusicHudRenderer {
 
         int prevDx = radius;
         for (int i = 0; i < radius; ++i) {
-            double dy = (double)radius - (double)i - 0.5;
-            int dx = (int)Math.round((double)radius - Math.sqrt(Math.max(0.0, (double)(radius * radius) - dy * dy)));
+            int dx = MusicHudRenderer.getRoundDx(radius, i);
             int span = Math.max(1, prevDx - dx);
             context.method_25294(x + dx, y + i, x + dx + span, y + i + 1, topShine);
             context.method_25294(x + width - dx - span, y + i, x + width - dx, y + i + 1, topShine);
@@ -544,8 +581,7 @@ public class MusicHudRenderer {
             context.method_25294(x, y, x + width, y + height - radius, argbColor);
         }
         for (int i = 0; i < radius; ++i) {
-            double dy = (double)radius - (double)i - 0.5;
-            int dx = (int)Math.round((double)radius - Math.sqrt(Math.max(0.0, (double)(radius * radius) - dy * dy)));
+            int dx = MusicHudRenderer.getRoundDx(radius, i);
             int lineY = y + height - radius + i;
             if (lineY >= y && lineY < y + height) {
                 context.method_25294(x + dx, lineY, x + width - dx, lineY + 1, argbColor);
@@ -569,8 +605,7 @@ public class MusicHudRenderer {
             context.method_25294(x + width - 1, y, x + width, y + height - radius, bottomDark);
         }
         for (int i = 0; i < radius; ++i) {
-            double dy = (double)radius - (double)i - 0.5;
-            int dx = (int)Math.round((double)radius - Math.sqrt(Math.max(0.0, (double)(radius * radius) - dy * dy)));
+            int dx = MusicHudRenderer.getRoundDx(radius, i);
             int lineY = y + height - radius + i;
             if (lineY >= y && lineY < y + height) {
                 context.method_25294(x + dx, lineY, x + dx + 1, lineY + 1, sideShine);
@@ -606,7 +641,7 @@ public class MusicHudRenderer {
 
     private void renderContent(class_332 context, TrackState state, class_310 mc, int alpha, long now, boolean mirrorLayout, int baseW, int baseH, float beatBounce, int finalX, int finalY, float scale, double mouseScreenX, double mouseScreenY) {
         class_327 textRenderer = mc.field_1772;
-        String style = HudConfig.INSTANCE.hudStyle != null ? HudConfig.INSTANCE.hudStyle.toUpperCase() : "MINIMAL_DARK";
+        String style = HudConfig.INSTANCE.hudStyle != null ? HudConfig.INSTANCE.hudStyle.toUpperCase(java.util.Locale.ROOT) : "MINIMAL_DARK";
         boolean isIsland = "DYNAMIC_ISLAND".equals(style);
         boolean isVinylDeck = "VINYL_DECK".equals(style);
         boolean isGlass = "GLASS_AMBIENT".equals(style);
@@ -625,7 +660,7 @@ public class MusicHudRenderer {
         boolean isFav = FavoritesManager.INSTANCE.isFavorite(state.artist(), state.title());
         String starIcon = isFav ? "★" : "☆";
         int starColor = isFav ? alpha << 24 | 0xFFD700 : (int)((float)alpha * 0.7f) << 24 | 0x94A3B8;
-        String timeText = this.formatTime(state.getInterpolatedPositionMs()) + " / " + this.formatTime(state.durationMs());
+        String timeText = this.formatTimePair(state.getInterpolatedPositionMs(), state.durationMs());
         int timeColor = alpha << 24 | 0x94A3B8;
         int timeWidth = textRenderer.method_1727(timeText);
         String platformStr = state.platformName() != null && !state.platformName().isEmpty() ? state.platformName() : "Музыка";
@@ -635,7 +670,8 @@ public class MusicHudRenderer {
         long currentPosMs = Math.max(0L, state.getInterpolatedPositionMs() + (long)HudConfig.INSTANCE.subtitlesOffsetMs + (long)trackOffset + (lm != null ? lm.getLiveAcousticOffsetMs() : 0L) + com.example.yandexmusichud.lyrics.LyricsManager.PERCEPTUAL_LEAD_MS);
         com.example.yandexmusichud.lyrics.LyricLine activeLine = HudConfig.INSTANCE.hudMiniKaraoke && lm != null ? lm.getCurrentActiveLine(state, currentPosMs) : null;
         com.example.yandexmusichud.lyrics.LyricLine upcomingLine = (activeLine == null && HudConfig.INSTANCE.hudMiniKaraoke && lm != null) ? lm.getUpcomingLine(state, currentPosMs) : null;
-        boolean hasTrackLyrics = lm != null && lm.getLyricsForTrack(state) != null && !lm.getLyricsForTrack(state).isEmpty() && !lm.isCurrentTrackDisabled();
+        java.util.List<com.example.yandexmusichud.lyrics.LyricLine> trackLyrics = lm != null && !lm.isCurrentTrackDisabled() ? lm.getLyricsForTrack(state) : null;
+        boolean hasTrackLyrics = trackLyrics != null && !trackLyrics.isEmpty();
         boolean showKaraokeStrip = HudConfig.INSTANCE.hudMiniKaraoke && (activeLine != null || upcomingLine != null || hasTrackLyrics);
 
         if (isIsland) {
@@ -838,7 +874,7 @@ public class MusicHudRenderer {
             }
             int rightLimitX = textX + maxTextWidth - timeWidth - 14;
             if (Math.abs(state.playbackSpeed() - 1.0f) >= 0.05f) {
-                String spdText = String.format(java.util.Locale.US, "⚡ %.2fx", Float.valueOf(state.playbackSpeed()));
+                String spdText = MusicHudRenderer.formatSpeed(state.playbackSpeed(), true);
                 int spdW = textRenderer.method_1727(spdText);
                 if (badgeX + spdW + 4 <= rightLimitX) {
                     MusicHudRenderer.renderRoundedRect(context, badgeX - 2, badgeY - 1, spdW + 4, 10, 3, (int)((float)alpha * 0.22f) << 24 | 0xFFA500);
@@ -881,7 +917,7 @@ public class MusicHudRenderer {
                 platX += platW + 5;
             }
             if (Math.abs(state.playbackSpeed() - 1.0f) >= 0.05f && textX + maxTextWidth - timeWidth - platX > 25) {
-                String spdText = String.format(java.util.Locale.US, "⚡%.2fx", Float.valueOf(state.playbackSpeed()));
+                String spdText = MusicHudRenderer.formatSpeed(state.playbackSpeed(), false);
                 int spdW = textRenderer.method_1727(spdText);
                 MusicHudRenderer.renderRoundedRect(context, platX - 2, platY - 1, spdW + 4, 10, 3, (int)((float)alpha * 0.22f) << 24 | 0xFFA500);
                 context.method_51433(textRenderer, spdText, platX, platY, alpha << 24 | 0xFFB732, false);
@@ -1049,7 +1085,7 @@ public class MusicHudRenderer {
             }
             int totalW = tr.method_1727(plain);
             float targetScroll = totalW <= textAreaW ? 0.0f : class_3532.method_15363((float)activeCenterPx - (float)textAreaW * 0.38f, 0.0f, (float)(totalW - textAreaW + 8));
-            this.karaokeScrollX += (targetScroll - this.karaokeScrollX) * 0.20f;
+            this.karaokeScrollX += (targetScroll - this.karaokeScrollX) * Math.min(1.0f, this.lastFrameDt * 12.0f);
 
             int drawX = textAreaX - Math.round(this.karaokeScrollX);
             int drawY = stripY + (inlineMode ? 1 : 2);
@@ -1112,7 +1148,7 @@ public class MusicHudRenderer {
     }
 
     public static void renderStylePreview(class_332 context, class_327 tr, int baseW, int baseH, boolean mirror) {
-        String style = HudConfig.INSTANCE.hudStyle != null ? HudConfig.INSTANCE.hudStyle.toUpperCase() : "MINIMAL_DARK";
+        String style = HudConfig.INSTANCE.hudStyle != null ? HudConfig.INSTANCE.hudStyle.toUpperCase(java.util.Locale.ROOT) : "MINIMAL_DARK";
         boolean isIsland = "DYNAMIC_ISLAND".equals(style);
         boolean isVinylDeck = "VINYL_DECK".equals(style);
         boolean isGlass = "GLASS_AMBIENT".equals(style);
@@ -1263,7 +1299,7 @@ public class MusicHudRenderer {
         if (platform == null) {
             return -16718337;
         }
-        return switch (platform.toLowerCase()) {
+        return switch (platform.toLowerCase(java.util.Locale.ROOT)) {
             case "local" -> -16718081;
             case "spotify" -> -14829228;
             case "youtube" -> -56798;
@@ -1307,8 +1343,27 @@ public class MusicHudRenderer {
             return "0:00";
         }
         long totalSeconds = ms / 1000L;
+        if (totalSeconds != this.lastSingleTimeSec) {
+            this.lastSingleTimeSec = totalSeconds;
+            this.lastSingleTimeStr = formatSecondsColon(totalSeconds);
+        }
+        return this.lastSingleTimeStr;
+    }
+
+    private String formatTimePair(long posMs, long durMs) {
+        long posSec = Math.max(0L, posMs) / 1000L;
+        long durSec = Math.max(0L, durMs) / 1000L;
+        if (posSec != this.lastTimePosSec || durSec != this.lastTimeDurSec) {
+            this.lastTimePosSec = posSec;
+            this.lastTimeDurSec = durSec;
+            this.lastTimePairStr = formatSecondsColon(posSec) + " / " + formatSecondsColon(durSec);
+        }
+        return this.lastTimePairStr;
+    }
+
+    private static String formatSecondsColon(long totalSeconds) {
         long minutes = totalSeconds / 60L;
         long seconds = totalSeconds % 60L;
-        return String.format("%d:%02d", minutes, seconds);
+        return seconds < 10L ? minutes + ":0" + seconds : minutes + ":" + seconds;
     }
 }

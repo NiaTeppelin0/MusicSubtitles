@@ -7,7 +7,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Random;
+import java.util.regex.Pattern;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.class_1109;
 import net.minecraft.class_1113;
@@ -23,6 +25,7 @@ import net.minecraft.class_437;
 import org.lwjgl.glfw.GLFW;
 
 public class MusicSyncScreen extends class_437 {
+    private static final Pattern NON_ALNUM_PATTERN = Pattern.compile("[^A-Z0-9]");
     private final class_437 parent;
     private int selectedTab = 0;
     private boolean lastKnownInRoom = false;
@@ -35,6 +38,8 @@ public class MusicSyncScreen extends class_437 {
     private String statusFeedback = "";
     private int statusFeedbackColor = 0xFFFFFFFF;
     private long statusFeedbackTime = 0L;
+    private long lastCacheStatsCheckMs = 0L;
+    private String cachedCacheStatsLine = "§7Кэш потоков: §f0 файлов (0.0 МБ)";
 
     public MusicSyncScreen(class_437 parent) {
         super((class_2561)class_2561.method_43470("Синхронизация Музыки"));
@@ -210,7 +215,7 @@ public class MusicSyncScreen extends class_437 {
                 this.playClickSound();
                 String cb = GLFW.glfwGetClipboardString(class_310.method_1551().method_22683().method_4490());
                 if (cb != null) {
-                    String clean = cb.trim().toUpperCase().replaceAll("[^A-Z0-9]", "");
+                    String clean = NON_ALNUM_PATTERN.matcher(cb.trim().toUpperCase(Locale.ROOT)).replaceAll("");
                     if (clean.length() > 5) {
                         clean = clean.substring(0, 5);
                     }
@@ -226,7 +231,7 @@ public class MusicSyncScreen extends class_437 {
 
             ModernButtonWidget joinBtn = new ModernButtonWidget(col2X + 10, col2Y + colH - 26, colW - 20, 20, (class_2561)class_2561.method_43470("🚀 Присоединиться"), btn -> {
                 this.playClickSound();
-                String code = this.roomInputField.method_1882().trim().toUpperCase();
+                String code = this.roomInputField.method_1882().trim().toUpperCase(Locale.ROOT);
                 String pwd = this.joinPasswordField.method_1882().trim();
                 if (!code.isEmpty()) {
                     PlayerBadgeManager.INSTANCE.joinRoom(code, pwd.isEmpty() ? null : pwd);
@@ -279,6 +284,19 @@ public class MusicSyncScreen extends class_437 {
                 }
             }
         } catch (Throwable ignored) {}
+        this.lastCacheStatsCheckMs = 0L;
+    }
+
+    private String getCacheStatsLine() {
+        long now = System.currentTimeMillis();
+        if (now - this.lastCacheStatsCheckMs < 1500L) {
+            return this.cachedCacheStatsLine;
+        }
+        this.lastCacheStatsCheckMs = now;
+        long[] cStats = this.getCacheStats();
+        double mb = (double)cStats[1] / (1024.0 * 1024.0);
+        this.cachedCacheStatsLine = String.format(Locale.ROOT, "§7Кэш потоков: §f%d файлов (%.1f МБ)", cStats[0], mb);
+        return this.cachedCacheStatsLine;
     }
 
     private long[] getCacheStats() {
@@ -481,9 +499,7 @@ public class MusicSyncScreen extends class_437 {
         context.method_51433(f, "§7Режим сглаживания: §3Acoustic Micro-Glide (Без щелчков/seek)", cardX + 16, rowY, -1, false);
 
         rowY += step;
-        long[] cStats = this.getCacheStats();
-        double mb = (double)cStats[1] / (1024.0 * 1024.0);
-        context.method_51433(f, String.format("§7Кэш потоков: §f%d файлов (%.1f МБ)", cStats[0], mb), cardX + 16, rowY, -1, false);
+        context.method_51433(f, this.getCacheStatsLine(), cardX + 16, rowY, -1, false);
     }
 
     private static class AmbientParticle {

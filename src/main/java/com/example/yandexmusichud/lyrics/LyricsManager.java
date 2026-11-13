@@ -117,6 +117,17 @@ public class LyricsManager {
     private static final Pattern PIPE_NOISE_PATTERN = Pattern.compile("(?i)\\s*[|/]\\s*(?:Official|\u041f\u0440\u0435\u043c\u044c\u0435\u0440\u0430|\u041a\u043b\u0438\u043f|Video|Audio|Visualizer|Lyric|Remastered|Mood|Soundtrack|OST).*$");
     private static final Pattern BRACKET_TAGS_PATTERN = Pattern.compile("(?i)\\s*[\\[\\(]\\s*(?:official(?:\\s+(?:music\\s+)?video|\\s+audio|\\s+visualizer|\\s+live|\\s*\\d+k)?|music\\s+video|video|audio|visualizer|lyric\\s+video|lyrics|\u043a\u043b\u0438\u043f|\u043f\u0440\u0435\u043c\u044c\u0435\u0440\u0430(?:\\s+\u043a\u043b\u0438\u043f\u0430|\\s+\u0442\u0440\u0435\u043a\u0430)?(?:\\s*\\d{4})?|\u043e\u0444\u0438\u0446\u0438\u0430\u043b\u044c\u043d\u044b\u0439\\s+\u043a\u043b\u0438\u043f|\u0432\u0438\u0434\u0435\u043e\u043a\u043b\u0438\u043f|mood\\s+video|live(?:\\s+performance|\\s+session)?|acoustic(?:\\s+version)?|remastered(?:\\s*\\d{4})?|deluxe(?:\\s+edition)?|\u0430\u043b\u044c\u0431\u043e\u043c(?:\\s+.*)?|album(?:\\s+.*)?|\u0441\u0438\u043d\u0433\u043b(?:\\s+.*)?|single(?:\\s+.*)?|\u043c\u0438\u043d\u0438[-\u0430]\u043b\u044c\u0431\u043e\u043c(?:\\s+.*)?|ep(?:\\s+.*)?|prod(?:\\.|\\s+by)?\\s+[^)\\]]+|feat\\.?\\s+[^)\\]]+|ft\\.?\\s+[^)\\]]+|slowed(?:\\s*\\+?\\s*reverb)?|speed\\s*up|sped\\s*up|nightcore|hd|4k|hq|4k\\s*60fps|\\d{4}|ost(?:\\s+.*)?|soundtrack(?:\\s+.*)?)\\s*[\\]\\)]");
     private static final Pattern TRAILING_NOISE_PATTERN = Pattern.compile("(?i)\\s*[-\u2013\u2014]\\s*(?:\u041f\u0440\u0435\u043c\u044c\u0435\u0440\u0430\\s+\u043a\u043b\u0438\u043f\u0430|\u041e\u0444\u0438\u0446\u0438\u0430\u043b\u044c\u043d\u044b\u0439\\s+\u043a\u043b\u0438\u043f|Official\\s+Video|Lyric\\s+Video)(?:\\s*\\d{4})?$");
+    private static final Pattern MULTI_SPACE_PATTERN = Pattern.compile("\\s+");
+    private static final Pattern LINE_SPLIT_PATTERN = Pattern.compile("\\r?\\n");
+    private static final Pattern NON_ALNUM_PATTERN = Pattern.compile("[^\\p{L}\\p{N}\\s]");
+    private static final Pattern INSTRUMENTAL_LINE_PATTERN = Pattern.compile("(?i)^\\[?(?:instrumental|\u0441\u043e\u043b\u043e|guitar\\s*solo|\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0430\u043b|\u043c\u0443\u0437\u044b\u043a\u0430|intro|outro|solo)\\]?$");
+    private static final Pattern INVALID_FILENAME_PATTERN = Pattern.compile("[\\\\/:*?\"<>|]");
+    private static final Pattern ENHANCED_TAG_STRIP_PATTERN = Pattern.compile("<\\d+:\\d+(?:\\.\\d+)?>");
+    private static final Pattern LRC_TAG_STRIP_PATTERN = Pattern.compile("\\[\\d+:\\d+(?:\\.\\d+)?\\]");
+    private static final Pattern NOISE_QUOTES_PATTERN = Pattern.compile("[\u25ba\u25c4\"'\u00ab\u00bb\u201c\u201d\u201e]");
+    private static final Pattern CARMELL_PATTERN = Pattern.compile("(?i)carmell\\s*dansen");
+    private static final Pattern FEAT_SUFFIX_PATTERN = Pattern.compile("(?i)\\s*(?:feat\\.?|ft\\.?|featuring)\\s+.*$");
+    private static final Pattern ARTIST_SEP_PATTERN = Pattern.compile("(?i)\\s*(?:,|&|x|\\+)\\s*");
 
     public void disableCurrentTrack() {
         if (this.currentTrackKey != null && !this.currentTrackKey.isEmpty()) {
@@ -244,10 +255,10 @@ public class LyricsManager {
         if (title == null || title.isBlank()) {
             return null;
         }
-        String cleanTitle = title.trim().toLowerCase();
-        String cleanArtist = artist != null ? artist.trim().toLowerCase() : "";
+        String cleanTitle = title.trim().toLowerCase(Locale.ROOT);
+        String cleanArtist = artist != null ? artist.trim().toLowerCase(Locale.ROOT) : "";
         for (Map.Entry<String, List<LyricLine>> entry : this.lyricsCache.entrySet()) {
-            String key = entry.getKey().toLowerCase();
+            String key = entry.getKey().toLowerCase(Locale.ROOT);
             if (key.contains(cleanTitle)) {
                 if (cleanArtist.isEmpty() || key.contains(cleanArtist)) {
                     List<LyricLine> lines = entry.getValue();
@@ -554,7 +565,7 @@ public class LyricsManager {
                 chunks.add(new LyricLine(startMs, endMs, vocalEnd, taggedSb.toString(), newWordList));
             }
         } else {
-            String[] tokens = line.text.split("\\s+");
+            String[] tokens = MULTI_SPACE_PATTERN.split(line.text);
             ArrayList<String> validTokens = new ArrayList<String>();
             ArrayList<int[]> tokenBounds = new ArrayList<int[]>();
             int searchPos = 0;
@@ -1560,7 +1571,7 @@ public class LyricsManager {
             if (!Files.exists(LOCAL_LYRICS_DIR, new LinkOption[0])) {
                 return null;
             }
-            File[] files = LOCAL_LYRICS_DIR.toFile().listFiles((dir, name) -> name.toLowerCase().endsWith(".lrc"));
+            File[] files = LOCAL_LYRICS_DIR.toFile().listFiles((dir, name) -> name.toLowerCase(Locale.ROOT).endsWith(".lrc"));
             if (files == null || files.length == 0) {
                 return null;
             }
@@ -1573,7 +1584,7 @@ public class LyricsManager {
             for (File f : files) {
                 String content;
                 List<LyricLine> parsed;
-                String fname = f.getName().toLowerCase().replace(".lrc", "");
+                String fname = f.getName().toLowerCase(Locale.ROOT).replace(".lrc", "");
                 String normFile = LyricsManager.normalizeForComparison(fname);
                 boolean exactMatch = normFile.equals(exactTarget);
                 boolean bothPresent = !normArtist.isEmpty() && normTitle.length() >= 4 && normFile.contains(normArtist) && normFile.contains(normTitle);
@@ -1596,7 +1607,7 @@ public class LyricsManager {
             if (!Files.exists(LOCAL_LYRICS_DIR, new LinkOption[0])) {
                 Files.createDirectories(LOCAL_LYRICS_DIR);
             }
-            String safeName = (artist + " - " + title).replaceAll("[\\\\/:*?\"<>|]", "_").trim() + ".lrc";
+            String safeName = INVALID_FILENAME_PATTERN.matcher(artist + " - " + title).replaceAll("_").trim() + ".lrc";
             Path target = LOCAL_LYRICS_DIR.resolve(safeName);
             Files.writeString(target, lrcContent, StandardCharsets.UTF_8);
         } catch (Exception ignored) {}
@@ -2355,8 +2366,8 @@ public class LyricsManager {
         if (a.contains(b) || b.contains(a)) {
             return (double)Math.min(a.length(), b.length()) / (double)Math.max(a.length(), b.length());
         }
-        HashSet<String> wordsA = new HashSet<String>(Arrays.asList(a.split("\\s+")));
-        HashSet<String> wordsB = new HashSet<String>(Arrays.asList(b.split("\\s+")));
+        HashSet<String> wordsA = new HashSet<String>(Arrays.asList(MULTI_SPACE_PATTERN.split(a)));
+        HashSet<String> wordsB = new HashSet<String>(Arrays.asList(MULTI_SPACE_PATTERN.split(b)));
         wordsA.removeIf(w -> w.length() < 2);
         wordsB.removeIf(w -> w.length() < 2);
         if (wordsA.isEmpty() || wordsB.isEmpty()) {
@@ -2392,7 +2403,7 @@ public class LyricsManager {
                 return true;
             }
         }
-        String trackInfo = (state.artist() + " " + state.title()).toLowerCase();
+        String trackInfo = (state.artist() + " " + state.title()).toLowerCase(Locale.ROOT);
         int cyrillicInTrack = LyricsManager.countCyrillicChars(trackInfo);
         int cjkInTrack = LyricsManager.countCjkChars(trackInfo);
         StringBuilder sampleLyrics = new StringBuilder();
@@ -2439,7 +2450,8 @@ public class LyricsManager {
         if (s == null) {
             return "";
         }
-        return s.toLowerCase(Locale.ROOT).replace('\u0451', '\u0435').replaceAll("[^\\p{L}\\p{N}\\s]", "").replaceAll("\\s+", " ").trim();
+        String noPunct = NON_ALNUM_PATTERN.matcher(s.toLowerCase(Locale.ROOT).replace('\u0451', '\u0435')).replaceAll("");
+        return MULTI_SPACE_PATTERN.matcher(noPunct).replaceAll(" ").trim();
     }
 
     public List<LyricLine> parseLrc(String lrcContent) {
@@ -2447,7 +2459,7 @@ public class LyricsManager {
             return Collections.emptyList();
         }
         ArrayList<RawLine> rawList = new ArrayList<RawLine>();
-        String[] lines = lrcContent.split("\\r?\\n");
+        String[] lines = LINE_SPLIT_PATTERN.split(lrcContent);
         long offsetMs = 0L;
         for (String raw : lines) {
             Matcher offMatcher = OFFSET_PATTERN.matcher(raw);
@@ -2476,8 +2488,8 @@ public class LyricsManager {
         for (int i = 0; i < rawList.size(); ++i) {
             String plainText;
             RawLine current = (RawLine)rawList.get(i);
-            if (current.text.isEmpty() || (plainText = this.stripEnhancedLrcTags(current.text)).isEmpty() || plainText.matches("(?i)^\\[?(?:instrumental|\u0441\u043e\u043b\u043e|guitar\\s*solo|\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0430\u043b|\u043c\u0443\u0437\u044b\u043a\u0430|intro|outro|solo)\\]?$")) continue;
-            plainText = plainText.replace("\\n", " ").replace(" // ", ", ").replace(" / ", ", ").replaceAll("\\s+", " ").trim();
+            if (current.text.isEmpty() || (plainText = this.stripEnhancedLrcTags(current.text)).isEmpty() || INSTRUMENTAL_LINE_PATTERN.matcher(plainText).matches()) continue;
+            plainText = MULTI_SPACE_PATTERN.matcher(plainText.replace("\\n", " ").replace(" // ", ", ").replace(" / ", ", ")).replaceAll(" ").trim();
             if (plainText.isEmpty()) continue;
             long startMs = current.timeMs;
             long nextTimeMs = i < rawList.size() - 1 ? ((RawLine)rawList.get((int)(i + 1))).timeMs : startMs + 5000L;
@@ -2486,7 +2498,7 @@ public class LyricsManager {
             if (cleanForMetrics.isEmpty()) {
                 cleanForMetrics = plainText;
             }
-            String[] tokens = cleanForMetrics.split("\\s+");
+            String[] tokens = MULTI_SPACE_PATTERN.split(cleanForMetrics);
             int wordCount = 0;
             for (String t : tokens) {
                 if (!t.isEmpty()) ++wordCount;
@@ -2565,7 +2577,7 @@ public class LyricsManager {
             long chunkVocalEnd;
             if (useExactWordSlices && wordCursor < words.size()) {
                 int tokenCount = 0;
-                for (String tk : chunkText.trim().split("\\s+")) {
+                for (String tk : MULTI_SPACE_PATTERN.split(chunkText.trim())) {
                     if (!tk.isEmpty()) ++tokenCount;
                 }
                 int wEnd = isLast ? words.size() : Math.min(words.size() - (chunks.size() - 1 - k), wordCursor + Math.max(1, tokenCount));
@@ -2614,7 +2626,7 @@ public class LyricsManager {
             }
             return chunks;
         }
-        String[] words = text.trim().split("\\s+");
+        String[] words = MULTI_SPACE_PATTERN.split(text.trim());
         if (words.length < targetParts * 2) {
             chunks.add(text.trim());
             return chunks;
@@ -2669,12 +2681,12 @@ public class LyricsManager {
             long min = Long.parseLong(matcher.group(1));
             double sec = Double.parseDouble(matcher.group(2));
             long wordTime = Math.max(0L, min * 60000L + (long)(sec * 1000.0) + offsetMs);
-            String wordText = matcher.group(3)
-                .replace("\\n", " ")
-                .replace(" // ", ", ")
-                .replace(" / ", ", ")
-                .replaceAll("\\s+", " ")
-                .trim();
+            String wordText = MULTI_SPACE_PATTERN.matcher(
+                matcher.group(3)
+                    .replace("\\n", " ")
+                    .replace(" // ", ", ")
+                    .replace(" / ", ", ")
+            ).replaceAll(" ").trim();
             String cleanWordText = LyricLine.stripFormattingTags(wordText).trim();
             if (!words.isEmpty() && explicitEnds.get(words.size() - 1) < 0L) {
                 explicitEnds.set(words.size() - 1, wordTime);
@@ -2706,21 +2718,22 @@ public class LyricsManager {
         if (plainText == null || plainText.trim().isEmpty()) {
             return Collections.emptyList();
         }
-        String[] tokens = plainText.trim().split("\\s+");
+        String[] tokens = MULTI_SPACE_PATTERN.split(plainText.trim());
         long gap = endMs - startMs;
         long vocalEnd = startMs + Math.max(500L, (long)((double)gap * 0.9));
         return this.splitLongLineIfNeeded(startMs, endMs, vocalEnd, gap, plainText, words, tokens.length);
     }
 
     private String stripEnhancedLrcTags(String rawText) {
-        return rawText.replaceAll("<\\d+:\\d+(?:\\.\\d+)?>", "").replaceAll("\\[\\d+:\\d+(?:\\.\\d+)?\\]", "").trim();
+        String stripped = ENHANCED_TAG_STRIP_PATTERN.matcher(rawText).replaceAll("");
+        return LRC_TAG_STRIP_PATTERN.matcher(stripped).replaceAll("").trim();
     }
 
     private FetchResult parsePlainLyrics(String plainLyrics, long totalDurationMs, long fetchId) {
         if (plainLyrics == null || plainLyrics.isEmpty()) {
             return new FetchResult(Collections.emptyList(), false);
         }
-        String[] rawLines = plainLyrics.split("\\r?\\n");
+        String[] rawLines = LINE_SPLIT_PATTERN.split(plainLyrics);
         ArrayList<String> validLines = new ArrayList<String>();
         for (String l : rawLines) {
             String trimmed = l.trim();
@@ -2786,28 +2799,25 @@ public class LyricsManager {
             if (wavBytes != null && wavBytes.length > 44) {
                 wavBase64 = Base64.getEncoder().encodeToString(wavBytes);
             }
-            StringBuilder bodyBuilder = new StringBuilder();
-            bodyBuilder.append("{\"lines\":[");
-            for (int i = 0; i < plainLines.size(); ++i) {
-                if (i > 0) {
-                    bodyBuilder.append(",");
-                }
-                bodyBuilder.append("\"").append(plainLines.get(i).replace("\\", "\\\\").replace("\"", "\\\"")).append("\"");
+            JsonObject reqBody = new JsonObject();
+            JsonArray linesJson = new JsonArray();
+            for (String pl : plainLines) {
+                linesJson.add(pl);
             }
-            bodyBuilder.append("],\"durationMs\":").append(totalDurationMs);
+            reqBody.add("lines", linesJson);
+            reqBody.addProperty("durationMs", totalDurationMs);
             if (wavBase64 != null) {
-                bodyBuilder.append(",\"wavBase64\":\"").append(wavBase64).append("\"");
+                reqBody.addProperty("wavBase64", wavBase64);
             }
-            bodyBuilder.append("}");
             if (fetchId != this.currentFetchId.get()) {
                 return null;
             }
-            String alignResponse = LyricsManager.httpPost(helperBase + "/ai-align", bodyBuilder.toString(), 5000);
+            String alignResponse = LyricsManager.httpPost(helperBase + "/ai-align", reqBody.toString(), 5000);
             if (alignResponse != null && !alignResponse.isEmpty() && fetchId == this.currentFetchId.get()) {
                 JsonObject json = JsonParser.parseString((String)alignResponse).getAsJsonObject();
-                if (json.has("success") && json.get("success").getAsBoolean() && json.has("lines") && !json.get("lines").isJsonNull()) {
-                    boolean possibleMismatch = json.has("possibleMismatch") && json.get("possibleMismatch").getAsBoolean();
-                    confidence = json.has("confidence") ? json.get("confidence").getAsDouble() : 1.0;
+                if (json.has("success") && json.get("success").isJsonPrimitive() && json.get("success").getAsBoolean() && json.has("lines") && json.get("lines").isJsonArray()) {
+                    boolean possibleMismatch = json.has("possibleMismatch") && json.get("possibleMismatch").isJsonPrimitive() && json.get("possibleMismatch").getAsBoolean();
+                    confidence = json.has("confidence") && json.get("confidence").isJsonPrimitive() ? json.get("confidence").getAsDouble() : 1.0;
                     if (confidence < 0.35) {
                         possibleMismatch = true;
                     }
@@ -2817,9 +2827,9 @@ public class LyricsManager {
                         String text;
                         if (!lineElem.isJsonObject()) continue;
                         JsonObject lineObj = lineElem.getAsJsonObject();
-                        long startMs = lineObj.has("startMs") ? lineObj.get("startMs").getAsLong() : 0L;
-                        long endMs = lineObj.has("endMs") ? lineObj.get("endMs").getAsLong() : startMs + 4000L;
-                        text = lineObj.has("text") ? lineObj.get("text").getAsString() : "";
+                        long startMs = lineObj.has("startMs") && lineObj.get("startMs").isJsonPrimitive() ? lineObj.get("startMs").getAsLong() : 0L;
+                        long endMs = lineObj.has("endMs") && lineObj.get("endMs").isJsonPrimitive() ? lineObj.get("endMs").getAsLong() : startMs + 4000L;
+                        text = lineObj.has("text") && lineObj.get("text").isJsonPrimitive() ? lineObj.get("text").getAsString() : "";
                         if (text.isEmpty()) continue;
                         ArrayList<LyricLine.Word> words = null;
                         if (lineObj.has("words") && lineObj.get("words").isJsonArray()) {
@@ -2828,11 +2838,11 @@ public class LyricsManager {
                             for (JsonElement wElem : wordsArr) {
                                 if (!wElem.isJsonObject()) continue;
                                 JsonObject wObj = wElem.getAsJsonObject();
-                                long wStart = wObj.has("startMs") ? wObj.get("startMs").getAsLong() : startMs;
-                                long wEnd = wObj.has("endMs") ? wObj.get("endMs").getAsLong() : wStart + 500L;
-                                String wText = wObj.has("text") ? wObj.get("text").getAsString() : "";
-                                int charStart = wObj.has("charStart") ? wObj.get("charStart").getAsInt() : 0;
-                                int charEnd = wObj.has("charEnd") ? wObj.get("charEnd").getAsInt() : wText.length();
+                                long wStart = wObj.has("startMs") && wObj.get("startMs").isJsonPrimitive() ? wObj.get("startMs").getAsLong() : startMs;
+                                long wEnd = wObj.has("endMs") && wObj.get("endMs").isJsonPrimitive() ? wObj.get("endMs").getAsLong() : wStart + 500L;
+                                String wText = wObj.has("text") && wObj.get("text").isJsonPrimitive() ? wObj.get("text").getAsString() : "";
+                                int charStart = wObj.has("charStart") && wObj.get("charStart").isJsonPrimitive() ? wObj.get("charStart").getAsInt() : 0;
+                                int charEnd = wObj.has("charEnd") && wObj.get("charEnd").isJsonPrimitive() ? wObj.get("charEnd").getAsInt() : wText.length();
                                 if (wText.isEmpty()) continue;
                                 words.add(new LyricLine.Word(wStart, wEnd, wText, charStart, charEnd));
                             }
@@ -2874,8 +2884,10 @@ public class LyricsManager {
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
             conn.setFixedLengthStreamingMode(bodyBytes.length);
-            conn.getOutputStream().write(bodyBytes);
-            conn.getOutputStream().flush();
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(bodyBytes);
+                os.flush();
+            }
             int code = conn.getResponseCode();
             if (code != 200) {
                 return null;
@@ -2931,8 +2943,8 @@ public class LyricsManager {
             s = BRACKET_TAGS_PATTERN.matcher(s).replaceAll("");
         }
         s = TRAILING_NOISE_PATTERN.matcher(s).replaceAll("");
-        s = s.replaceAll("[\u25ba\u25c4\"'\u00ab\u00bb\u201c\u201d\u201e]", "");
-        s = s.replaceAll("\\s+", " ").trim();
+        s = NOISE_QUOTES_PATTERN.matcher(s).replaceAll("");
+        s = MULTI_SPACE_PATTERN.matcher(s).replaceAll(" ").trim();
         return s;
     }
 
@@ -2943,7 +2955,7 @@ public class LyricsManager {
         String s = title.trim();
         String lower = s.toLowerCase(Locale.ROOT);
         if (lower.contains("carmelldansen") || lower.contains("carmell dansen")) {
-            return s.replaceAll("(?i)carmell\\s*dansen", "Caramelldansen");
+            return CARMELL_PATTERN.matcher(s).replaceAll("Caramelldansen");
         }
         return s;
     }
@@ -2952,8 +2964,8 @@ public class LyricsManager {
         if (artist == null) {
             return "";
         }
-        String s = artist.replaceAll("(?i)\\s*(?:feat\\.?|ft\\.?|featuring)\\s+.*$", "").trim();
-        String[] parts = s.split("(?i)\\s*(?:,|&|x|\\+)\\s*");
+        String s = FEAT_SUFFIX_PATTERN.matcher(artist).replaceAll("").trim();
+        String[] parts = ARTIST_SEP_PATTERN.split(s);
         if (parts.length > 0 && !parts[0].trim().isEmpty()) {
             String p = parts[0].trim();
             if (p.toLowerCase(Locale.ROOT).startsWith("prodby") && parts.length > 1) {

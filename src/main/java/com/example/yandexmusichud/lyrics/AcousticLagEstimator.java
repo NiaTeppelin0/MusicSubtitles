@@ -247,6 +247,46 @@ public final class AcousticLagEstimator {
         return new double[][]{blurred, onset};
     }
 
+    private static double prepareCentered(double[] a, int n, double[] daOut) {
+        double sa = 0.0;
+        for (int i = 0; i < n; ++i) {
+            sa += a[i];
+        }
+        double ma = sa / n;
+        double va = 0.0;
+        for (int i = 0; i < n; ++i) {
+            double d = a[i] - ma;
+            daOut[i] = d;
+            va += d * d;
+        }
+        if (va < 1.0E-12) {
+            return -1.0;
+        }
+        return va;
+    }
+
+    private static double pearsonPrecomputed(double[] da, double va, double[] b, int bOffset, int n) {
+        if (va < 1.0E-12) {
+            return Double.NaN;
+        }
+        double sb = 0.0;
+        for (int i = 0; i < n; ++i) {
+            sb += b[bOffset + i];
+        }
+        double mb = sb / n;
+        double cov = 0.0;
+        double vb = 0.0;
+        for (int i = 0; i < n; ++i) {
+            double db = b[bOffset + i] - mb;
+            cov += da[i] * db;
+            vb += db * db;
+        }
+        if (vb < 1.0E-12) {
+            return Double.NaN;
+        }
+        return cov / Math.sqrt(va * vb);
+    }
+
     private static double pearson(double[] a, double[] b, int bOffset, int n) {
         double sa = 0.0;
         double sb = 0.0;
@@ -285,9 +325,19 @@ public final class AcousticLagEstimator {
         int lags = 2 * lagFrames + 1;
         double[] score = new double[lags];
         int valid = 0;
+        double[] estDa0 = null;
+        double[] estDa1 = null;
+        double estVa0 = -1.0;
+        double estVa1 = -1.0;
+        if (lags > 0 && n > 0) {
+            estDa0 = new double[n];
+            estVa0 = prepareCentered(audio[0], n, estDa0);
+            estDa1 = new double[n];
+            estVa1 = prepareCentered(audio[1], n, estDa1);
+        }
         for (int j = 0; j < lags; ++j) {
-            double pa = pearson(audio[0], expected[0], j, n);
-            double po = pearson(audio[1], expected[1], j, n);
+            double pa = pearsonPrecomputed(estDa0, estVa0, expected[0], j, n);
+            double po = pearsonPrecomputed(estDa1, estVa1, expected[1], j, n);
             double s;
             if (Double.isNaN(pa) && Double.isNaN(po)) {
                 s = Double.NaN;

@@ -12,8 +12,10 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import net.minecraft.class_1011;
 import net.minecraft.class_1043;
 import net.minecraft.class_1044;
@@ -36,6 +38,7 @@ public class FavoritesScreen
 extends class_437 {
     private static final class_2960 TEX_VINYL = class_2960.method_60655("yandexmusichud", "textures/gui/radial/vinyl_record.png");
     private static final class_2960 TEX_SPINDLE = class_2960.method_60655("yandexmusichud", "textures/gui/radial/vinyl_spindle.png");
+    private static final AtomicLong THUMB_ID_GEN = new AtomicLong(0L);
     private final class_437 parent;
     private class_342 searchField;
     private final List<FavoriteTrack> filteredTracks = new ArrayList<FavoriteTrack>();
@@ -106,9 +109,9 @@ extends class_437 {
 
     private void updateFilteredList(String query) {
         this.filteredTracks.clear();
-        String q = query != null ? query.trim().toLowerCase() : "";
+        String q = query != null ? query.trim().toLowerCase(Locale.ROOT) : "";
         for (FavoriteTrack track : FavoritesManager.INSTANCE.getFavorites()) {
-            if (!q.isEmpty() && !track.title.toLowerCase().contains(q) && !track.artist.toLowerCase().contains(q) && (track.album == null || !track.album.toLowerCase().contains(q)) && (track.platformName == null || !track.platformName.toLowerCase().contains(q))) continue;
+            if (!q.isEmpty() && !track.title.toLowerCase(Locale.ROOT).contains(q) && !track.artist.toLowerCase(Locale.ROOT).contains(q) && (track.album == null || !track.album.toLowerCase(Locale.ROOT).contains(q)) && (track.platformName == null || !track.platformName.toLowerCase(Locale.ROOT).contains(q))) continue;
             this.filteredTracks.add(track);
         }
         int itemHeight = 36;
@@ -340,7 +343,7 @@ extends class_437 {
         if (platform == null) {
             return -13312;
         }
-        return switch (platform.toLowerCase()) {
+        return switch (platform.toLowerCase(Locale.ROOT)) {
             case "spotify" -> -14829228;
             case "youtube" -> -65536;
             case "soundcloud" -> -43776;
@@ -357,20 +360,36 @@ extends class_437 {
         if (track == null || track.coverBase64 == null || track.coverBase64.isEmpty()) {
             return CoverTextureManager.DEFAULT_COVER;
         }
-        String string = idKey = track.id != null ? track.id : "unknown";
-        if (THUMBNAIL_CACHE.containsKey(idKey)) {
-            return THUMBNAIL_CACHE.get(idKey);
+        idKey = track.id != null ? track.id : "unknown";
+        class_2960 cached = THUMBNAIL_CACHE.get(idKey);
+        if (cached != null) {
+            return cached;
         }
+        class_1011 img = null;
+        boolean handedOff = false;
         try {
+            class_310 mc = class_310.method_1551();
+            if (mc == null || !mc.method_18854()) {
+                return CoverTextureManager.DEFAULT_COVER;
+            }
             byte[] bytes = Base64.getDecoder().decode(track.coverBase64);
-            class_1011 img = class_1011.method_4309((InputStream)new ByteArrayInputStream(bytes));
-            class_2960 texUri = class_2960.method_60655((String)"yandexmusichud", (String)("favorites_thumb_" + Math.abs(idKey.hashCode())));
+            img = class_1011.method_4309((InputStream)new ByteArrayInputStream(bytes));
+            if (img == null) {
+                return CoverTextureManager.DEFAULT_COVER;
+            }
+            class_2960 texUri = class_2960.method_60655((String)"yandexmusichud", (String)("favorites_thumb_" + THUMB_ID_GEN.incrementAndGet()));
             class_1043 texture = new class_1043(() -> "fav_thumb", img);
-            class_310.method_1551().method_1531().method_4616(texUri, (class_1044)texture);
+            handedOff = true;
+            mc.method_1531().method_4616(texUri, (class_1044)texture);
             THUMBNAIL_CACHE.put(idKey, texUri);
             return texUri;
         }
         catch (Exception e) {
+            if (!handedOff && img != null) {
+                try {
+                    img.close();
+                } catch (Exception ignored) {}
+            }
             return CoverTextureManager.DEFAULT_COVER;
         }
     }

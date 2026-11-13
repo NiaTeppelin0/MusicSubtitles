@@ -8,6 +8,7 @@ import javazoom.jl.player.JavaSoundAudioDevice;
 public class VolumeAudioDevice extends JavaSoundAudioDevice {
     private static final Field SOURCE_FIELD;
     private volatile float volume = 1.0f;
+    private short[] scratchBuffer = new short[2304];
 
     static {
         Field f = null;
@@ -61,7 +62,10 @@ public class VolumeAudioDevice extends JavaSoundAudioDevice {
     protected void writeImpl(short[] samples, int offs, int len) throws JavaLayerException {
         float vol = this.volume;
         if (vol != 1.0f) {
-            short[] adjusted = new short[len];
+            if (this.scratchBuffer.length < len) {
+                this.scratchBuffer = new short[len];
+            }
+            short[] adjusted = this.scratchBuffer;
             for (int i = 0; i < len; i++) {
                 int val = Math.round((float)samples[offs + i] * vol);
                 if (val > 32767) {

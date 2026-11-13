@@ -1,5 +1,7 @@
 package com.example.yandexmusichud.donationalerts;
 
+import java.util.Locale;
+
 public class DonationAlertEvent {
     private final long id;
     private final String donorName;
@@ -7,14 +9,27 @@ public class DonationAlertEvent {
     private final String currency;
     private final String message;
     private final long timestamp;
+    private final String formattedAmount;
+    private final String cachedTitle;
+    private final String cachedSubtitle;
 
     public DonationAlertEvent(long id, String donorName, double amount, String currency, String message) {
         this.id = id;
         this.donorName = donorName != null && !donorName.trim().isEmpty() ? donorName.trim() : "Аноним";
         this.amount = Math.max(0.0, amount);
-        this.currency = currency != null && !currency.trim().isEmpty() ? currency.trim().toUpperCase() : "RUB";
+        this.currency = currency != null && !currency.trim().isEmpty() ? currency.trim().toUpperCase(Locale.ROOT) : "RUB";
         this.message = message != null ? message.trim() : "";
         this.timestamp = System.currentTimeMillis();
+        String sym = this.getCurrencySymbol();
+        if (this.amount == (long) this.amount) {
+            this.formattedAmount = String.format(Locale.ROOT, "%,d %s", (long) this.amount, sym);
+        } else {
+            this.formattedAmount = String.format(Locale.ROOT, "%,.2f %s", this.amount, sym);
+        }
+        this.cachedTitle = "§6§l✦ §f" + this.donorName + " §7задонатил §e§l" + this.formattedAmount;
+        this.cachedSubtitle = !this.message.isEmpty()
+            ? "§f\"" + this.message + "\""
+            : "§7Спасибо за поддержку стрима! §6❤";
     }
 
     public long getId() {
@@ -54,10 +69,7 @@ public class DonationAlertEvent {
     }
 
     public String getFormattedAmount() {
-        if (this.amount == (long) this.amount) {
-            return String.format("%,d %s", (long) this.amount, this.getCurrencySymbol());
-        }
-        return String.format("%,.2f %s", this.amount, this.getCurrencySymbol());
+        return this.formattedAmount;
     }
 
     public String getBadgeText() {
@@ -65,14 +77,11 @@ public class DonationAlertEvent {
     }
 
     public String getTitle() {
-        return "§6§l✦ §f" + this.donorName + " §7задонатил §e§l" + this.getFormattedAmount();
+        return this.cachedTitle;
     }
 
     public String getSubtitle() {
-        if (!this.message.isEmpty()) {
-            return "§f\"" + this.message + "\"";
-        }
-        return "§7Спасибо за поддержку стрима! §6❤";
+        return this.cachedSubtitle;
     }
 
     public int getAccentColor() {

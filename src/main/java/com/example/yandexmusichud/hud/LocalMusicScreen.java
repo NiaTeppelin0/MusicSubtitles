@@ -142,14 +142,14 @@ public class LocalMusicScreen extends class_437 {
 
     private void updateFilteredList(String query) {
         this.filteredTracks.clear();
-        String q = query != null ? query.trim().toLowerCase() : "";
+        String q = query != null ? query.trim().toLowerCase(java.util.Locale.ROOT) : "";
         List<LocalMusicTrack> all = LocalMusicPlayer.getInstance().getPlaylist();
         for (LocalMusicTrack track : all) {
             if (!q.isEmpty()) {
-                boolean matchTitle = track.getTitle().toLowerCase().contains(q);
-                boolean matchArtist = track.getArtist().toLowerCase().contains(q);
-                boolean matchAlbum = track.getAlbum().toLowerCase().contains(q);
-                boolean matchFmt = track.getFormat().toLowerCase().contains(q);
+                boolean matchTitle = track.getTitle().toLowerCase(java.util.Locale.ROOT).contains(q);
+                boolean matchArtist = track.getArtist().toLowerCase(java.util.Locale.ROOT).contains(q);
+                boolean matchAlbum = track.getAlbum().toLowerCase(java.util.Locale.ROOT).contains(q);
+                boolean matchFmt = track.getFormat().toLowerCase(java.util.Locale.ROOT).contains(q);
                 if (!matchTitle && !matchArtist && !matchAlbum && !matchFmt) {
                     continue;
                 }
@@ -295,12 +295,16 @@ public class LocalMusicScreen extends class_437 {
             curPos = (long)((float)totalDur * this.dragSeekPreviewFrac);
         }
 
-        long posSec = curPos / 1000L;
-        String curTimeStr = String.format("%02d:%02d", posSec / 60L, posSec % 60L);
+        long posSec = Math.max(0L, curPos / 1000L);
+        long pm = posSec / 60L;
+        long ps = posSec % 60L;
+        String curTimeStr = (pm < 10L ? "0" : "") + pm + (ps < 10L ? ":0" : ":") + ps;
         context.method_51433(this.field_22793, curTimeStr, panelX + 14, scrubberY - 2, 0xFFE2E8F0, false);
 
-        long durSec = totalDur / 1000L;
-        String durTimeStr = String.format("%02d:%02d", durSec / 60L, durSec % 60L);
+        long durSec = Math.max(0L, totalDur / 1000L);
+        long dm = durSec / 60L;
+        long ds = durSec % 60L;
+        String durTimeStr = (dm < 10L ? "0" : "") + dm + (ds < 10L ? ":0" : ":") + ds;
         context.method_51433(this.field_22793, durTimeStr, panelX + panelW - 44, scrubberY - 2, 0xFF64748B, false);
 
         MusicHudRenderer.renderProgressBarWithPlayhead(context, scrubberX, scrubberY, scrubberW, scrubberH, progress, 0xFF38BDF8, 0xFF10B981, nowMs);

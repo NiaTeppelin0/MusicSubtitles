@@ -2,6 +2,7 @@ package com.example.yandexmusichud.hud;
 
 import com.example.yandexmusichud.config.HudConfig;
 import com.example.yandexmusichud.helper.HelperProcessManager;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.InputStream;
@@ -11,6 +12,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.class_1109;
@@ -30,9 +32,9 @@ public class YandexMusicSettingsScreen extends class_437 {
     public static boolean hasPromptedStartup = false;
     private final class_437 parent;
     private class_342 tokenField;
-    private String testStatus = "";
-    private int testStatusColor = 0xFFCCCCCC;
-    private boolean isTesting = false;
+    private volatile String testStatus = "";
+    private volatile int testStatusColor = 0xFFCCCCCC;
+    private volatile boolean isTesting = false;
     private final List<AmbientParticle> bgParticles = new ArrayList<AmbientParticle>();
     private final Random random = new Random();
     private boolean particlesInit = false;
@@ -89,10 +91,13 @@ public class YandexMusicSettingsScreen extends class_437 {
         this.tokenField.method_1880(1024);
         this.tokenField.method_1852(sanitizeToken(HudConfig.INSTANCE.yandexMusicToken != null ? HudConfig.INSTANCE.yandexMusicToken : ""));
         this.tokenField.method_1863(newText -> {
-            if (newText != null && (newText.contains("&") || newText.contains("access_token=") || newText.toLowerCase().startsWith("oauth ") || newText.toLowerCase().startsWith("bearer "))) {
-                String clean = sanitizeToken(newText);
-                if (!clean.equals(newText)) {
-                    this.tokenField.method_1852(clean);
+            if (newText != null) {
+                String lower = newText.toLowerCase(Locale.ROOT);
+                if (newText.contains("&") || newText.contains("access_token=") || lower.startsWith("oauth ") || lower.startsWith("bearer ")) {
+                    String clean = sanitizeToken(newText);
+                    if (!clean.equals(newText)) {
+                        this.tokenField.method_1852(clean);
+                    }
                 }
             }
         });
@@ -166,9 +171,10 @@ public class YandexMusicSettingsScreen extends class_437 {
         if (s.startsWith("'") && s.endsWith("'") && s.length() >= 2) {
             s = s.substring(1, s.length() - 1).trim();
         }
-        if (s.toLowerCase().startsWith("oauth ")) {
+        String lower = s.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("oauth ")) {
             s = s.substring(6).trim();
-        } else if (s.toLowerCase().startsWith("bearer ")) {
+        } else if (lower.startsWith("bearer ")) {
             s = s.substring(7).trim();
         }
         int tokenIdx = s.indexOf("access_token=");
@@ -224,9 +230,10 @@ public class YandexMusicSettingsScreen extends class_437 {
         CompletableFuture.runAsync(() -> {
             boolean tokenOk = false;
             String tokenUser = "";
+            HttpURLConnection conn = null;
             try {
                 URL u = URI.create("https://api.music.yandex.net/account/status").toURL();
-                HttpURLConnection conn = (HttpURLConnection)u.openConnection();
+                conn = (HttpURLConnection)u.openConnection();
                 conn.setRequestProperty("Authorization", "OAuth " + token);
                 conn.setConnectTimeout(4000);
                 conn.setReadTimeout(4000);
@@ -235,24 +242,31 @@ public class YandexMusicSettingsScreen extends class_437 {
                     tokenOk = true;
                     try (InputStream is = conn.getInputStream()) {
                         String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-                        JsonObject json = JsonParser.parseString(body).getAsJsonObject();
-                        if (json.has("result") && json.get("result").isJsonObject()) {
-                            JsonObject res = json.getAsJsonObject("result");
-                            if (res.has("account") && res.get("account").isJsonObject()) {
-                                JsonObject acc = res.getAsJsonObject("account");
-                                if (acc.has("displayName") && !acc.get("displayName").isJsonNull()) {
-                                    tokenUser = acc.get("displayName").getAsString();
-                                } else if (acc.has("fullName") && !acc.get("fullName").isJsonNull()) {
-                                    tokenUser = acc.get("fullName").getAsString();
-                                } else if (acc.has("login") && !acc.get("login").isJsonNull()) {
-                                    tokenUser = acc.get("login").getAsString();
+                        JsonElement parsed = JsonParser.parseString(body);
+                        if (parsed.isJsonObject()) {
+                            JsonObject json = parsed.getAsJsonObject();
+                            if (json.has("result") && json.get("result").isJsonObject()) {
+                                JsonObject res = json.getAsJsonObject("result");
+                                if (res.has("account") && res.get("account").isJsonObject()) {
+                                    JsonObject acc = res.getAsJsonObject("account");
+                                    if (acc.has("displayName") && acc.get("displayName").isJsonPrimitive()) {
+                                        tokenUser = acc.get("displayName").getAsString();
+                                    } else if (acc.has("fullName") && acc.get("fullName").isJsonPrimitive()) {
+                                        tokenUser = acc.get("fullName").getAsString();
+                                    } else if (acc.has("login") && acc.get("login").isJsonPrimitive()) {
+                                        tokenUser = acc.get("login").getAsString();
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                conn.disconnect();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
 
             if (tokenOk) {
                 this.testStatus = "§a✔ " + (!tokenUser.isEmpty() ? tokenUser : "OK");

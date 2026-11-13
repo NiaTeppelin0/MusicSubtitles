@@ -18,6 +18,7 @@ import java.nio.file.attribute.FileAttribute;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,6 +32,11 @@ public class FavoritesManager {
     public static final FavoritesManager INSTANCE = new FavoritesManager();
     private final Map<String, FavoriteTrack> favoritesMap = new ConcurrentHashMap<String, FavoriteTrack>();
     private final List<FavoriteTrack> favoritesList = new ArrayList<FavoriteTrack>();
+    private volatile int favoritesVersion = 0;
+    private volatile String lastFavCheckArtist = null;
+    private volatile String lastFavCheckTitle = null;
+    private volatile int lastFavCheckVersion = -1;
+    private volatile boolean lastFavCheckResult = false;
 
     public FavoritesManager() {
         this.load();
@@ -72,11 +78,21 @@ public class FavoritesManager {
     }
 
     public boolean isFavorite(String artist, String title) {
-        if (title == null || title.isBlank()) {
+        if (this.favoritesMap.isEmpty() || title == null || title.isBlank()) {
             return false;
         }
-        String id = FavoriteTrack.createId(artist, title);
-        return this.favoritesMap.containsKey(id);
+        int ver = this.favoritesVersion;
+        String safeArtist = artist != null ? artist : "";
+        if (ver == this.lastFavCheckVersion && title.equals(this.lastFavCheckTitle) && safeArtist.equals(this.lastFavCheckArtist)) {
+            return this.lastFavCheckResult;
+        }
+        String id = FavoriteTrack.createId(safeArtist, title);
+        boolean res = this.favoritesMap.containsKey(id);
+        this.lastFavCheckArtist = safeArtist;
+        this.lastFavCheckTitle = title;
+        this.lastFavCheckVersion = ver;
+        this.lastFavCheckResult = res;
+        return res;
     }
 
     public synchronized boolean toggleFavorite(TrackState state, CoverTextureManager coverManager) {
@@ -101,6 +117,7 @@ public class FavoritesManager {
         this.favoritesMap.put(track.id, track);
         this.favoritesList.removeIf(t -> t.id.equals(track.id));
         this.favoritesList.add(0, track);
+        ++this.favoritesVersion;
         this.save();
     }
 
@@ -110,6 +127,7 @@ public class FavoritesManager {
         }
         this.favoritesMap.remove(id);
         this.favoritesList.removeIf(t -> t.id.equals(id));
+        ++this.favoritesVersion;
         this.save();
     }
 
@@ -139,7 +157,7 @@ public class FavoritesManager {
         String finalUrl = url.trim();
         CompletableFuture.runAsync(() -> {
             boolean opened = false;
-            String os = System.getProperty("os.name", "").toLowerCase();
+            String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
             if (os.contains("win")) {
                 try {
                     new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", finalUrl).start();
@@ -201,7 +219,7 @@ public class FavoritesManager {
                 }
                 String absPath = folder.toAbsolutePath().toString();
                 boolean opened = false;
-                String os = System.getProperty("os.name", "").toLowerCase();
+                String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
                 if (os.contains("win")) {
                     try {
                         new ProcessBuilder("explorer.exe", absPath).start();

@@ -20,13 +20,13 @@ public class LyricsConsensusEngine {
                 arrayList.add(object.text);
             }
         } else if (string != null && !string.isBlank()) {
-            String[] splitLines = string.split("\\r?\\n");
+            String[] splitLines = LINE_SPLIT_PATTERN.split(string);
             arrayList.addAll(Arrays.asList(splitLines));
         }
         for (String string2 : arrayList) {
             String string3 = LyricsConsensusEngine.normalize(string2);
             if (string3.isEmpty()) continue;
-            String[] stringArray = string3.split("\\s+");
+            String[] stringArray = WHITESPACE_PATTERN.split(string3);
             if (stringArray.length >= 2) {
                 hashSet.add(string3);
             } else if (string3.length() >= 3 && string3.codePoints().anyMatch(cp -> cp > 0x2E80)) {
@@ -80,7 +80,7 @@ public class LyricsConsensusEngine {
         List<String> titleKeywords = new ArrayList<String>();
         if (targetTitle != null && !targetTitle.isBlank()) {
             String normT = normalize(targetTitle);
-            for (String w : normT.split("\\s+")) {
+            for (String w : WHITESPACE_PATTERN.split(normT)) {
                 if (w.length() >= 3) {
                     titleKeywords.add(w);
                 }
@@ -228,7 +228,7 @@ public class LyricsConsensusEngine {
 
     private static String baseProviderFamily(String provider) {
         if (provider == null) return "";
-        String upper = provider.toUpperCase();
+        String upper = provider.toUpperCase(Locale.ROOT);
         if (upper.startsWith("LRCLIB")) return "LRCLIB";
         if (upper.startsWith("YANDEX")) return "YANDEX";
         return upper;
@@ -304,11 +304,16 @@ public class LyricsConsensusEngine {
         return (double)n2 / (double)n;
     }
 
+    private static final java.util.regex.Pattern LINE_SPLIT_PATTERN = java.util.regex.Pattern.compile("\\r?\\n");
+    private static final java.util.regex.Pattern WHITESPACE_PATTERN = java.util.regex.Pattern.compile("\\s+");
+    private static final java.util.regex.Pattern NON_ALNUM_PATTERN = java.util.regex.Pattern.compile("[^\\p{L}\\p{N}\\s]");
+
     private static String normalize(String string) {
         if (string == null) {
             return "";
         }
-        return string.toLowerCase(Locale.ROOT).replace('\u0451', '\u0435').replaceAll("[^\\p{L}\\p{N}\\s]", "").replaceAll("\\s+", " ").trim();
+        String noPunct = NON_ALNUM_PATTERN.matcher(string.toLowerCase(Locale.ROOT).replace('\u0451', '\u0435')).replaceAll("");
+        return WHITESPACE_PATTERN.matcher(noPunct).replaceAll(" ").trim();
     }
 
     public static class Candidate {

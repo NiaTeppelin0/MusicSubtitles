@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.util.Base64;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.minecraft.class_1011;
 import net.minecraft.class_1043;
 import net.minecraft.class_1044;
@@ -34,6 +35,7 @@ public class CoverTextureManager {
     private volatile long lastColorUpdateTime = 0L;
     private static final class_2960 ROUNDED_DEFAULT_COVER = class_2960.method_60655((String)"yandexmusichud", (String)"dynamic/rounded_default_cover");
     private volatile boolean defaultCoverInitialized = false;
+    private final AtomicInteger decodeGeneration = new AtomicInteger(0);
 
     private class_2960 getDefaultCover() {
         if (this.defaultCoverInitialized) return ROUNDED_DEFAULT_COVER;
@@ -44,11 +46,21 @@ public class CoverTextureManager {
         try (InputStream stream = CoverTextureManager.class.getResourceAsStream("/assets/yandexmusichud/textures/gui/default_cover.png");){
             if (stream == null) return DEFAULT_COVER;
             class_1011 img = class_1011.method_4309((InputStream)stream);
-            CoverTextureManager.roundImageCorners(img, (int)((float)Math.min(img.method_4307(), img.method_4323()) * 0.12f));
-            class_1043 texture = new class_1043(() -> "default_cover", img);
-            mc.method_1531().method_4616(ROUNDED_DEFAULT_COVER, (class_1044)texture);
-            this.defaultCoverInitialized = true;
-            return ROUNDED_DEFAULT_COVER;
+            class_1043 texture = null;
+            try {
+                CoverTextureManager.roundImageCorners(img, (int)((float)Math.min(img.method_4307(), img.method_4323()) * 0.12f));
+                texture = new class_1043(() -> "default_cover", img);
+                mc.method_1531().method_4616(ROUNDED_DEFAULT_COVER, (class_1044)texture);
+                this.defaultCoverInitialized = true;
+                return ROUNDED_DEFAULT_COVER;
+            }
+            catch (Exception e) {
+                if (texture != null) {
+                    texture.close();
+                } else {
+                    img.close();
+                }
+            }
         }
         catch (Exception exception) {
 
@@ -115,18 +127,47 @@ public class CoverTextureManager {
 
     public void updateCover(String base64Data) {
         this.lastBase64 = base64Data;
+        int gen = this.decodeGeneration.incrementAndGet();
+        if (base64Data == null || base64Data.isEmpty()) {
+            this.resetToDefault();
+            return;
+        }
         this.decoder.submit(() -> {
+            if (gen != this.decodeGeneration.get()) {
+                return;
+            }
+            class_1011 image = null;
             try {
                 byte[] imageBytes = Base64.getDecoder().decode(base64Data);
-                class_1011 image = class_1011.method_4309((InputStream)new ByteArrayInputStream(imageBytes));
+                image = class_1011.method_4309((InputStream)new ByteArrayInputStream(imageBytes));
+                if (gen != this.decodeGeneration.get()) {
+                    image.close();
+                    return;
+                }
                 this.dominantColor = CoverTextureManager.extractDominantColor(image);
                 CoverTextureManager.roundImageCorners(image, (int)((float)Math.min(image.method_4307(), image.method_4323()) * 0.12f));
-                class_2960 targetId = this.useTextureA ? COVER_TEXTURE_B : COVER_TEXTURE_A;
-                this.useTextureA = !this.useTextureA;
-                class_310.method_1551().execute(() -> {
+                if (gen != this.decodeGeneration.get()) {
+                    image.close();
+                    return;
+                }
+                class_1011 readyImage = image;
+                image = null;
+                class_310 mc = class_310.method_1551();
+                if (mc == null) {
+                    readyImage.close();
+                    return;
+                }
+                mc.execute(() -> {
+                    class_1043 texture = null;
                     try {
-                        class_1043 texture = new class_1043(() -> "album_cover", image);
-                        class_310.method_1551().method_1531().method_4616(targetId, (class_1044)texture);
+                        if (gen != this.decodeGeneration.get()) {
+                            readyImage.close();
+                            return;
+                        }
+                        class_2960 targetId = this.useTextureA ? COVER_TEXTURE_B : COVER_TEXTURE_A;
+                        this.useTextureA = !this.useTextureA;
+                        texture = new class_1043(() -> "album_cover", readyImage);
+                        mc.method_1531().method_4616(targetId, (class_1044)texture);
                         class_2960 oldId = this.currentCoverId != null ? this.currentCoverId : this.getDefaultCover();
                         if (oldId != targetId) {
                             this.previousCoverId = oldId;
@@ -136,12 +177,23 @@ public class CoverTextureManager {
                         this.hasCustomCover = true;
                     }
                     catch (Exception e) {
+                        if (texture != null) {
+                            texture.close();
+                        } else {
+                            readyImage.close();
+                        }
                         this.currentCoverId = this.getDefaultCover();
                     }
                 });
             }
             catch (Exception e) {
-                this.currentCoverId = DEFAULT_COVER;
+                if (image != null) {
+                    image.close();
+                }
+                if (gen == this.decodeGeneration.get()) {
+                    this.hasCustomCover = false;
+                    this.currentCoverId = DEFAULT_COVER;
+                }
             }
         });
     }
@@ -235,18 +287,26 @@ public class CoverTextureManager {
     }
 
     public void resetToDefault() {
+        this.decodeGeneration.incrementAndGet();
         this.dominantColor = 7101671;
         if (this.hasCustomCover) {
-            class_310.method_1551().execute(() -> {
-                this.previousCoverId = this.currentCoverId;
-                this.coverChangeTimestamp = System.currentTimeMillis();
+            class_310 mc = class_310.method_1551();
+            if (mc != null) {
+                mc.execute(() -> {
+                    this.previousCoverId = this.currentCoverId;
+                    this.coverChangeTimestamp = System.currentTimeMillis();
+                    this.hasCustomCover = false;
+                    this.currentCoverId = this.getDefaultCover();
+                });
+            } else {
                 this.hasCustomCover = false;
-                this.currentCoverId = this.getDefaultCover();
-            });
+                this.currentCoverId = DEFAULT_COVER;
+            }
         }
     }
 
     public void shutdown() {
+        this.decodeGeneration.incrementAndGet();
         this.decoder.shutdownNow();
         this.resetToDefault();
     }

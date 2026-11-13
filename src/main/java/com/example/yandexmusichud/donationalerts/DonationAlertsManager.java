@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.ByteArrayInputStream;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -17,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -24,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.minecraft.class_1011;
@@ -37,6 +40,17 @@ import net.minecraft.class_3417;
 
 public class DonationAlertsManager {
     private static final DonationAlertsManager INSTANCE = new DonationAlertsManager();
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(6))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
+    private static final Pattern EDGE_QUOTES_PATTERN = Pattern.compile("^[\"']+|[\"']+$");
+    private static final Pattern ACCESS_TOKEN_PATTERN = Pattern.compile("access_token\\s*=\\s*['\"]([^'\"]+)['\"]");
+    private static final Pattern JWT_PATTERN = Pattern.compile("(eyJ[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+)");
+    private static final Pattern HTML_UID_PATTERN = Pattern.compile("\"user_id\"\\s*:\\s*(\\d+)|user_id\\s*=\\s*(\\d+)");
+    private static final Pattern HTML_NAME_PATTERN = Pattern.compile("\"user(?:name)?\"\\s*:\\s*\"([^\"]+)\"|user_name\\s*=\\s*['\"]([^'\"]+)['\"]");
+    private static final Pattern HTML_AVATAR_PATTERN = Pattern.compile("\"avatar\"\\s*:\\s*\"([^\"]+)\"");
+    private static final Pattern DOT_SPLIT_PATTERN = Pattern.compile("\\.");
 
     public enum Status {
         DISCONNECTED("\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u043e", 0x777788),
@@ -77,6 +91,8 @@ public class DonationAlertsManager {
     private volatile String lastUsedRawToken = "";
     private volatile WebSocket centrifugoSocket = null;
     private volatile boolean isSocketConnecting = false;
+    private final AtomicInteger wsGeneration = new AtomicInteger(0);
+    private volatile boolean closed = false;
 
     public static DonationAlertsManager getInstance() {
         return INSTANCE;
@@ -106,7 +122,7 @@ public class DonationAlertsManager {
                 s = s.substring(slash + 1);
             }
         }
-        s = s.replaceAll("^[\"']+|[\"']+$", "").trim();
+        s = EDGE_QUOTES_PATTERN.matcher(s).replaceAll("").trim();
         return s;
     }
 
@@ -131,6 +147,9 @@ public class DonationAlertsManager {
     }
 
     public void start() {
+        if (this.closed) {
+            return;
+        }
         if (!HudConfig.INSTANCE.daEnabled || HudConfig.INSTANCE.daToken == null || HudConfig.INSTANCE.daToken.trim().isEmpty()) {
             this.status = Status.DISCONNECTED;
             return;
@@ -142,6 +161,7 @@ public class DonationAlertsManager {
     }
 
     public void disconnect() {
+        this.wsGeneration.incrementAndGet();
         this.status = Status.DISCONNECTED;
         this.isInitialPoll = true;
         this.lastSeenDonationId = -1L;
@@ -149,8 +169,14 @@ public class DonationAlertsManager {
         closeSocket();
     }
 
+    public synchronized void shutdown() {
+        this.closed = true;
+        this.disconnect();
+        this.scheduler.shutdownNow();
+    }
+
     private void pollSafe() {
-        if (!HudConfig.INSTANCE.daEnabled) {
+        if (this.closed || !HudConfig.INSTANCE.daEnabled) {
             this.status = Status.DISCONNECTED;
             return;
         }
@@ -174,6 +200,7 @@ public class DonationAlertsManager {
             this.processedDonationIds.clear();
             this.status = Status.CONNECTING;
             this.lastErrorMessage = "";
+            this.wsGeneration.incrementAndGet();
             closeSocket();
         }
 
@@ -195,10 +222,10 @@ public class DonationAlertsManager {
     }
 
     private void doPoll(String token) {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(6))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+        if (this.closed || !HudConfig.INSTANCE.daEnabled) {
+            return;
+        }
+        HttpClient client = SHARED_HTTP_CLIENT;
 
         String bearer = "";
         if (token.startsWith("eyJ")) {
@@ -227,7 +254,8 @@ public class DonationAlertsManager {
 
         fetchDonations(client, bearer, token);
 
-        if (this.userId > 0 && (this.centrifugoSocket == null || this.centrifugoSocket.isInputClosed() || this.centrifugoSocket.isOutputClosed())) {
+        if (!this.closed && HudConfig.INSTANCE.daEnabled && this.userId > 0
+                && (this.centrifugoSocket == null || this.centrifugoSocket.isInputClosed() || this.centrifugoSocket.isOutputClosed())) {
             connectWebSocket(client, bearer, this.userId);
         }
     }
@@ -239,8 +267,9 @@ public class DonationAlertsManager {
             return null;
         }
         try {
+            String encodedToken = URLEncoder.encode(widgetToken, StandardCharsets.UTF_8);
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create("https://www.donationalerts.com/api/v1/token/widget?token=" + widgetToken))
+                    .uri(URI.create("https://www.donationalerts.com/api/v1/token/widget?token=" + encodedToken))
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .header("Accept", "application/json")
                     .timeout(Duration.ofSeconds(6))
@@ -252,30 +281,39 @@ public class DonationAlertsManager {
             String body = res.body() != null ? res.body().trim() : "";
 
             if (!body.isEmpty() && body.startsWith("{")) {
-                JsonObject json = JsonParser.parseString(body).getAsJsonObject();
-                if (json.has("success") && json.get("success").getAsBoolean()) {
-                    if (json.has("data") && json.getAsJsonObject("data").has("token")) {
-                        String jwt = json.getAsJsonObject("data").get("token").getAsString();
-                        if (jwt != null && !jwt.isEmpty()) {
-                            this.resolvedBearerToken = jwt;
-                            this.lastErrorMessage = "";
-                            try {
-                                String[] parts = jwt.split("\\.");
-                                if (parts.length >= 2) {
-                                    String payloadJson = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
-                                    JsonObject payloadObj = JsonParser.parseString(payloadJson).getAsJsonObject();
-                                    if (payloadObj.has("sub") && !payloadObj.get("sub").isJsonNull()) {
-                                        this.userId = Long.parseLong(payloadObj.get("sub").getAsString());
-                                    }
+                JsonElement parsed = JsonParser.parseString(body);
+                if (parsed.isJsonObject()) {
+                    JsonObject json = parsed.getAsJsonObject();
+                    if (json.has("success") && json.get("success").isJsonPrimitive() && json.get("success").getAsBoolean()) {
+                        if (json.has("data") && json.get("data").isJsonObject()) {
+                            JsonObject dataObj = json.getAsJsonObject("data");
+                            if (dataObj.has("token") && dataObj.get("token").isJsonPrimitive()) {
+                                String jwt = dataObj.get("token").getAsString();
+                                if (jwt != null && !jwt.isEmpty()) {
+                                    this.resolvedBearerToken = jwt;
+                                    this.lastErrorMessage = "";
+                                    try {
+                                        String[] parts = DOT_SPLIT_PATTERN.split(jwt);
+                                        if (parts.length >= 2) {
+                                            String payloadJson = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+                                            JsonElement pElem = JsonParser.parseString(payloadJson);
+                                            if (pElem.isJsonObject()) {
+                                                JsonObject payloadObj = pElem.getAsJsonObject();
+                                                if (payloadObj.has("sub") && payloadObj.get("sub").isJsonPrimitive()) {
+                                                    this.userId = Long.parseLong(payloadObj.get("sub").getAsString());
+                                                }
+                                            }
+                                        }
+                                    } catch (Throwable ignored) {}
+                                    return jwt;
                                 }
-                            } catch (Throwable ignored) {}
-                            return jwt;
+                            }
                         }
+                    } else if (json.has("code") && json.get("code").isJsonPrimitive() && json.get("code").getAsInt() == 1001) {
+                        this.status = Status.ERROR;
+                        this.lastErrorMessage = "\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u0442\u043e\u043a\u0435\u043d (\u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u0432 DA)";
+                        return null;
                     }
-                } else if (json.has("code") && json.get("code").getAsInt() == 1001) {
-                    this.status = Status.ERROR;
-                    this.lastErrorMessage = "\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u0442\u043e\u043a\u0435\u043d (\u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u0432 DA)";
-                    return null;
                 }
             } else if (code == 401 || code == 422) {
                 this.status = Status.ERROR;
@@ -298,8 +336,9 @@ public class DonationAlertsManager {
 
     private String crawlWidgetAndResolveToken(HttpClient client, String widgetToken) {
         try {
+            String encodedToken = URLEncoder.encode(widgetToken, StandardCharsets.UTF_8);
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create("https://www.donationalerts.com/widget/alerts?token=" + widgetToken))
+                    .uri(URI.create("https://www.donationalerts.com/widget/alerts?token=" + encodedToken))
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
@@ -313,14 +352,12 @@ public class DonationAlertsManager {
 
             if (code == 200) {
 
-                Pattern pToken = Pattern.compile("access_token\\s*=\\s*['\"]([^'\"]+)['\"]");
-                Matcher mToken = pToken.matcher(body);
+                Matcher mToken = ACCESS_TOKEN_PATTERN.matcher(body);
                 String jwt = "";
                 if (mToken.find()) {
                     jwt = mToken.group(1);
                 } else {
-                    Pattern pJwt = Pattern.compile("(eyJ[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+)");
-                    Matcher mJwt = pJwt.matcher(body);
+                    Matcher mJwt = JWT_PATTERN.matcher(body);
                     if (mJwt.find()) {
                         jwt = mJwt.group(1);
                     }
@@ -364,8 +401,7 @@ public class DonationAlertsManager {
     private void parseUserInfoFromHtml(HttpClient client, String html) {
         try {
 
-            Pattern pUid = Pattern.compile("\"user_id\"\\s*:\\s*(\\d+)|user_id\\s*=\\s*(\\d+)");
-            Matcher mUid = pUid.matcher(html);
+            Matcher mUid = HTML_UID_PATTERN.matcher(html);
             if (mUid.find()) {
                 String uidStr = mUid.group(1) != null ? mUid.group(1) : mUid.group(2);
                 if (uidStr != null) {
@@ -375,8 +411,7 @@ public class DonationAlertsManager {
                 }
             }
 
-            Pattern pName = Pattern.compile("\"user(?:name)?\"\\s*:\\s*\"([^\"]+)\"|user_name\\s*=\\s*['\"]([^'\"]+)['\"]");
-            Matcher mName = pName.matcher(html);
+            Matcher mName = HTML_NAME_PATTERN.matcher(html);
             if (mName.find()) {
                 String name = mName.group(1) != null ? mName.group(1) : mName.group(2);
                 if (name != null && !name.trim().isEmpty() && this.streamerUsername.isEmpty()) {
@@ -384,8 +419,7 @@ public class DonationAlertsManager {
                 }
             }
 
-            Pattern pAv = Pattern.compile("\"avatar\"\\s*:\\s*\"([^\"]+)\"");
-            Matcher mAv = pAv.matcher(html);
+            Matcher mAv = HTML_AVATAR_PATTERN.matcher(html);
             if (mAv.find()) {
                 String av = mAv.group(1).replace("\\/", "/");
                 if (av != null && !av.equals(this.streamerAvatarUrl)) {
@@ -413,10 +447,13 @@ public class DonationAlertsManager {
                 this.status = Status.CONNECTED;
                 this.lastErrorMessage = "";
 
-                JsonObject root = JsonParser.parseString(res.body()).getAsJsonObject();
-                if (root.has("data") && root.get("data").isJsonArray()) {
-                    JsonArray arr = root.getAsJsonArray("data");
-                    handleDonationList(arr);
+                JsonElement parsed = JsonParser.parseString(res.body());
+                if (parsed.isJsonObject()) {
+                    JsonObject root = parsed.getAsJsonObject();
+                    if (root.has("data") && root.get("data").isJsonArray()) {
+                        JsonArray arr = root.getAsJsonArray("data");
+                        handleDonationList(arr);
+                    }
                 }
             } else if (code == 401) {
                 String body = res.body() != null ? res.body() : "";
@@ -474,23 +511,26 @@ public class DonationAlertsManager {
                 res = client.send(req, HttpResponse.BodyHandlers.ofString());
             }
             if (res.statusCode() == 200) {
-                JsonObject obj = JsonParser.parseString(res.body()).getAsJsonObject();
-                if (obj.has("data") && obj.get("data").isJsonObject()) {
-                    JsonObject d = obj.getAsJsonObject("data");
-                    if (d.has("id")) {
-                        this.userId = d.get("id").getAsLong();
-                    }
-                    if (d.has("name")) {
-                        this.streamerUsername = d.get("name").getAsString();
-                    }
-                    if (d.has("socket_connection_token") && !d.get("socket_connection_token").isJsonNull()) {
-                        this.socketConnectionToken = d.get("socket_connection_token").getAsString();
-                    }
-                    if (d.has("avatar") && !d.get("avatar").isJsonNull()) {
-                        String avatar = d.get("avatar").getAsString();
-                        if (avatar != null && !avatar.equals(this.streamerAvatarUrl)) {
-                            this.streamerAvatarUrl = avatar;
-                            loadAvatar(client, avatar);
+                JsonElement parsed = JsonParser.parseString(res.body());
+                if (parsed.isJsonObject()) {
+                    JsonObject obj = parsed.getAsJsonObject();
+                    if (obj.has("data") && obj.get("data").isJsonObject()) {
+                        JsonObject d = obj.getAsJsonObject("data");
+                        if (d.has("id") && d.get("id").isJsonPrimitive()) {
+                            this.userId = d.get("id").getAsLong();
+                        }
+                        if (d.has("name") && d.get("name").isJsonPrimitive()) {
+                            this.streamerUsername = d.get("name").getAsString();
+                        }
+                        if (d.has("socket_connection_token") && d.get("socket_connection_token").isJsonPrimitive()) {
+                            this.socketConnectionToken = d.get("socket_connection_token").getAsString();
+                        }
+                        if (d.has("avatar") && d.get("avatar").isJsonPrimitive()) {
+                            String avatar = d.get("avatar").getAsString();
+                            if (avatar != null && !avatar.equals(this.streamerAvatarUrl)) {
+                                this.streamerAvatarUrl = avatar;
+                                loadAvatar(client, avatar);
+                            }
                         }
                     }
                 }
@@ -499,8 +539,9 @@ public class DonationAlertsManager {
     }
 
     private synchronized void connectWebSocket(HttpClient client, String bearer, long uid) {
-        if (this.isSocketConnecting) return;
+        if (this.closed || !HudConfig.INSTANCE.daEnabled || this.isSocketConnecting) return;
         this.isSocketConnecting = true;
+        final int gen = this.wsGeneration.get();
         try {
             client.newWebSocketBuilder()
                     .connectTimeout(Duration.ofSeconds(6))
@@ -509,6 +550,13 @@ public class DonationAlertsManager {
 
                         @Override
                         public void onOpen(WebSocket webSocket) {
+                            if (closed || gen != wsGeneration.get() || !HudConfig.INSTANCE.daEnabled) {
+                                isSocketConnecting = false;
+                                try {
+                                    webSocket.abort();
+                                } catch (Throwable ignored) {}
+                                return;
+                            }
                             DonationAlertsManager.this.centrifugoSocket = webSocket;
                             DonationAlertsManager.this.isSocketConnecting = false;
                             DonationAlertsManager.this.status = Status.CONNECTED;
@@ -516,13 +564,20 @@ public class DonationAlertsManager {
                             String tokenToSend = (DonationAlertsManager.this.socketConnectionToken != null && !DonationAlertsManager.this.socketConnectionToken.isEmpty())
                                     ? DonationAlertsManager.this.socketConnectionToken
                                     : bearer;
-                            String authMsg = "{\"params\":{\"token\":\"" + tokenToSend + "\"},\"id\":1}";
-                            webSocket.sendText(authMsg, true);
+                            JsonObject params = new JsonObject();
+                            params.addProperty("token", tokenToSend);
+                            JsonObject authObj = new JsonObject();
+                            authObj.add("params", params);
+                            authObj.addProperty("id", 1);
+                            webSocket.sendText(authObj.toString(), true);
                             WebSocket.Listener.super.onOpen(webSocket);
                         }
 
                         @Override
                         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                            if (closed || gen != wsGeneration.get()) {
+                                return WebSocket.Listener.super.onText(webSocket, data, last);
+                            }
                             buffer.append(data);
                             if (last) {
                                 String text = buffer.toString();
@@ -534,16 +589,35 @@ public class DonationAlertsManager {
 
                         @Override
                         public void onError(WebSocket webSocket, Throwable error) {
-                            DonationAlertsManager.this.isSocketConnecting = false;
-                            DonationAlertsManager.this.centrifugoSocket = null;
+                            if (gen == wsGeneration.get()) {
+                                DonationAlertsManager.this.isSocketConnecting = false;
+                                if (DonationAlertsManager.this.centrifugoSocket == webSocket) {
+                                    DonationAlertsManager.this.centrifugoSocket = null;
+                                }
+                            }
                             WebSocket.Listener.super.onError(webSocket, error);
                         }
 
                         @Override
                         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-                            DonationAlertsManager.this.isSocketConnecting = false;
-                            DonationAlertsManager.this.centrifugoSocket = null;
+                            if (gen == wsGeneration.get()) {
+                                DonationAlertsManager.this.isSocketConnecting = false;
+                                if (DonationAlertsManager.this.centrifugoSocket == webSocket) {
+                                    DonationAlertsManager.this.centrifugoSocket = null;
+                                }
+                            }
                             return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
+                        }
+                    }).whenComplete((ws, err) -> {
+                        if (err != null) {
+                            if (gen == wsGeneration.get()) {
+                                this.isSocketConnecting = false;
+                            }
+                        } else if (ws != null && (this.closed || gen != this.wsGeneration.get() || !HudConfig.INSTANCE.daEnabled)) {
+                            this.isSocketConnecting = false;
+                            try {
+                                ws.abort();
+                            } catch (Throwable ignored) {}
                         }
                     });
         } catch (Throwable t) {
@@ -554,29 +628,45 @@ public class DonationAlertsManager {
     private void subscribeCentrifugoChannel(HttpClient client, WebSocket ws, String bearer, long uid, String clientId) {
         CompletableFuture.runAsync(() -> {
             try {
-                String subBody = "{\"channels\":[\"$alerts:donation_" + uid + "\"],\"client\":\"" + clientId + "\"}";
+                if (this.closed || !HudConfig.INSTANCE.daEnabled) {
+                    return;
+                }
+                JsonArray channelsArr = new JsonArray();
+                channelsArr.add("$alerts:donation_" + uid);
+                JsonObject subObj = new JsonObject();
+                subObj.add("channels", channelsArr);
+                subObj.addProperty("client", clientId);
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create("https://www.donationalerts.com/api/v1/centrifuge/subscribe"))
                         .header("Authorization", "Bearer " + bearer)
                         .header("Content-Type", "application/json")
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .timeout(Duration.ofSeconds(6))
-                        .POST(HttpRequest.BodyPublishers.ofString(subBody))
+                        .POST(HttpRequest.BodyPublishers.ofString(subObj.toString()))
                         .build();
 
                 HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
                 if (res.statusCode() == 200) {
-                    JsonObject json = JsonParser.parseString(res.body()).getAsJsonObject();
-                    if (json.has("channels") && json.get("channels").isJsonArray()) {
-                        JsonArray arr = json.getAsJsonArray("channels");
-                        if (!arr.isEmpty()) {
-                            JsonObject ch = arr.get(0).getAsJsonObject();
-                            if (ch.has("token")) {
-                                String channelToken = ch.get("token").getAsString();
-                                String wsSub = "{\"params\":{\"channel\":\"$alerts:donation_" + uid + "\",\"token\":\"" + channelToken + "\"},\"method\":1,\"id\":2}";
-                                ws.sendText(wsSub, true);
-                                DonationAlertsManager.this.status = Status.CONNECTED;
-                                DonationAlertsManager.this.lastErrorMessage = "";
+                    JsonElement parsed = JsonParser.parseString(res.body());
+                    if (parsed.isJsonObject()) {
+                        JsonObject json = parsed.getAsJsonObject();
+                        if (json.has("channels") && json.get("channels").isJsonArray()) {
+                            JsonArray arr = json.getAsJsonArray("channels");
+                            if (!arr.isEmpty() && arr.get(0).isJsonObject()) {
+                                JsonObject ch = arr.get(0).getAsJsonObject();
+                                if (ch.has("token") && ch.get("token").isJsonPrimitive()) {
+                                    String channelToken = ch.get("token").getAsString();
+                                    JsonObject wsParams = new JsonObject();
+                                    wsParams.addProperty("channel", "$alerts:donation_" + uid);
+                                    wsParams.addProperty("token", channelToken);
+                                    JsonObject wsSubObj = new JsonObject();
+                                    wsSubObj.add("params", wsParams);
+                                    wsSubObj.addProperty("method", 1);
+                                    wsSubObj.addProperty("id", 2);
+                                    ws.sendText(wsSubObj.toString(), true);
+                                    DonationAlertsManager.this.status = Status.CONNECTED;
+                                    DonationAlertsManager.this.lastErrorMessage = "";
+                                }
                             }
                         }
                     }
@@ -587,11 +677,18 @@ public class DonationAlertsManager {
 
     private void handleCentrifugoMessage(HttpClient client, WebSocket ws, String text, long uid, String bearer) {
         try {
-            JsonObject json = JsonParser.parseString(text).getAsJsonObject();
-            if (json.has("id") && json.get("id").getAsInt() == 1) {
-                if (json.has("result") && json.getAsJsonObject("result").has("client")) {
-                    String clientId = json.getAsJsonObject("result").get("client").getAsString();
-                    subscribeCentrifugoChannel(client, ws, bearer, uid, clientId);
+            JsonElement parsed = JsonParser.parseString(text);
+            if (!parsed.isJsonObject()) {
+                return;
+            }
+            JsonObject json = parsed.getAsJsonObject();
+            if (json.has("id") && json.get("id").isJsonPrimitive() && json.get("id").getAsInt() == 1) {
+                if (json.has("result") && json.get("result").isJsonObject()) {
+                    JsonObject resObj = json.getAsJsonObject("result");
+                    if (resObj.has("client") && resObj.get("client").isJsonPrimitive()) {
+                        String clientId = resObj.get("client").getAsString();
+                        subscribeCentrifugoChannel(client, ws, bearer, uid, clientId);
+                    }
                 }
             }
             if (json.has("result") && json.get("result").isJsonObject()) {
@@ -608,7 +705,7 @@ public class DonationAlertsManager {
     }
 
     private void handleSingleDonationObject(JsonObject obj) {
-        long id = obj.has("id") ? obj.get("id").getAsLong() : -1L;
+        long id = obj.has("id") && obj.get("id").isJsonPrimitive() ? obj.get("id").getAsLong() : -1L;
         if (id <= 0 || this.processedDonationIds.contains(id)) {
             return;
         }
@@ -623,12 +720,12 @@ public class DonationAlertsManager {
         if (id > this.lastSeenDonationId) {
             this.lastSeenDonationId = id;
         }
-        String donorName = obj.has("username") && !obj.get("username").isJsonNull()
+        String donorName = obj.has("username") && obj.get("username").isJsonPrimitive()
                 ? obj.get("username").getAsString()
-                : (obj.has("name") && !obj.get("name").isJsonNull() ? obj.get("name").getAsString() : "\u0410\u043d\u043e\u043d\u0438\u043c");
-        double amount = obj.has("amount") ? obj.get("amount").getAsDouble() : 0.0;
-        String currency = obj.has("currency") ? obj.get("currency").getAsString() : "RUB";
-        String message = obj.has("message") && !obj.get("message").isJsonNull() ? obj.get("message").getAsString() : "";
+                : (obj.has("name") && obj.get("name").isJsonPrimitive() ? obj.get("name").getAsString() : "\u0410\u043d\u043e\u043d\u0438\u043c");
+        double amount = obj.has("amount") && obj.get("amount").isJsonPrimitive() ? obj.get("amount").getAsDouble() : 0.0;
+        String currency = obj.has("currency") && obj.get("currency").isJsonPrimitive() ? obj.get("currency").getAsString() : "RUB";
+        String message = obj.has("message") && obj.get("message").isJsonPrimitive() ? obj.get("message").getAsString() : "";
 
         if (amount >= (double)HudConfig.INSTANCE.daMinAmountAlert) {
             triggerDonationAlert(new DonationAlertEvent(id, donorName, amount, currency, message));
@@ -636,13 +733,18 @@ public class DonationAlertsManager {
     }
 
     private void closeSocket() {
-        if (this.centrifugoSocket != null) {
-            try {
-                this.centrifugoSocket.sendClose(WebSocket.NORMAL_CLOSURE, "disconnect");
-            } catch (Throwable ignored) {}
-            this.centrifugoSocket = null;
-        }
+        WebSocket oldSocket = this.centrifugoSocket;
+        this.centrifugoSocket = null;
         this.isSocketConnecting = false;
+        if (oldSocket != null) {
+            try {
+                oldSocket.sendClose(WebSocket.NORMAL_CLOSURE, "disconnect");
+            } catch (Throwable ignored) {
+                try {
+                    oldSocket.abort();
+                } catch (Throwable ignored2) {}
+            }
+        }
     }
 
     private void handleDonationList(JsonArray arr) {
@@ -655,7 +757,7 @@ public class DonationAlertsManager {
             for (JsonElement elem : arr) {
                 if (!elem.isJsonObject()) continue;
                 JsonObject obj = elem.getAsJsonObject();
-                long id = obj.has("id") ? obj.get("id").getAsLong() : -1L;
+                long id = obj.has("id") && obj.get("id").isJsonPrimitive() ? obj.get("id").getAsLong() : -1L;
                 if (id > 0) {
                     this.processedDonationIds.add(id);
                     if (id > this.lastSeenDonationId) {
@@ -676,6 +778,8 @@ public class DonationAlertsManager {
 
     private void loadAvatar(HttpClient client, String avatarUrl) {
         CompletableFuture.runAsync(() -> {
+            class_1011 image = null;
+            boolean handedOff = false;
             try {
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create(avatarUrl))
@@ -685,30 +789,44 @@ public class DonationAlertsManager {
                 HttpResponse<byte[]> res = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
                 if (res.statusCode() == 200) {
                     byte[] bytes = res.body();
-                    class_1011 image = class_1011.method_4309(new ByteArrayInputStream(bytes));
-                    if (image != null) {
+                    image = class_1011.method_4309(new ByteArrayInputStream(bytes));
+                    class_310 mc = class_310.method_1551();
+                    if (image != null && mc != null && !this.closed) {
                         int r = Math.min(image.method_4307(), image.method_4323()) / 2;
                         if (r > 0) {
                             CoverTextureManager.roundImageCorners(image, r);
                         }
-
-                        class_310.method_1551().execute(() -> {
+                        final class_1011 finalImage = image;
+                        handedOff = true;
+                        mc.execute(() -> {
+                            boolean registered = false;
                             try {
                                 if (this.hasCustomAvatar) {
-                                    class_310.method_1551().method_1531().method_4615(DA_AVATAR_ID);
+                                    mc.method_1531().method_4615(DA_AVATAR_ID);
                                 }
-                                class_1043 texture = new class_1043(() -> "da_avatar", image);
-                                class_310.method_1551().method_1531().method_4616(DA_AVATAR_ID, texture);
+                                class_1043 texture = new class_1043(() -> "da_avatar", finalImage);
+                                mc.method_1531().method_4616(DA_AVATAR_ID, texture);
                                 this.hasCustomAvatar = true;
-                            } catch (Exception e) {
-                                try {
-                                    image.close();
-                                } catch (Exception ignored2) {}
+                                registered = true;
+                            } catch (Exception ignored) {
+                            } finally {
+                                if (!registered) {
+                                    try {
+                                        finalImage.close();
+                                    } catch (Exception ignored2) {}
+                                }
                             }
                         });
                     }
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            } finally {
+                if (!handedOff && image != null) {
+                    try {
+                        image.close();
+                    } catch (Exception ignored) {}
+                }
+            }
         });
     }
 
@@ -735,12 +853,16 @@ public class DonationAlertsManager {
     private static void playAlertSound() {
         try {
             class_310 mc = class_310.method_1551();
-            mc.execute(() -> {
-                try {
-                    class_3414 sound = (class_3414)class_3417.field_14793.comp_349();
-                    mc.method_1483().method_4873((class_1113)class_1109.method_4757(sound, 1.25f, 0.9f));
-                } catch (Throwable ignored) {}
-            });
+            if (mc != null) {
+                mc.execute(() -> {
+                    try {
+                        if (mc.method_1483() != null) {
+                            class_3414 sound = (class_3414)class_3417.field_14793.comp_349();
+                            mc.method_1483().method_4873((class_1113)class_1109.method_4757(sound, 1.25f, 0.9f));
+                        }
+                    } catch (Throwable ignored) {}
+                });
+            }
         } catch (Throwable ignored) {}
     }
 }

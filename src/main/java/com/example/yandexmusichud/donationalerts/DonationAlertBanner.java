@@ -19,20 +19,23 @@ public class DonationAlertBanner {
         if (!HudConfig.INSTANCE.daEnabled || !HudConfig.INSTANCE.daAlertsInHud) {
             return;
         }
-        boolean twitchActiveAtTop = com.example.yandexmusichud.twitch.TwitchAlertBanner.INSTANCE.isShowing() && !"BOTTOM".equalsIgnoreCase(HudConfig.INSTANCE.twitchToastPosition);
-        int topMargin = twitchActiveAtTop ? 46 : 14;
-        renderInternal(context, screenW, screenH, now, topMargin);
+        renderInternal(context, screenW, screenH, now, getTopMargin(), false);
     }
 
     public void renderInScreen(class_332 context, int screenW, int screenH, long now) {
-        boolean twitchActiveAtTop = com.example.yandexmusichud.twitch.TwitchAlertBanner.INSTANCE.isShowing() && !"BOTTOM".equalsIgnoreCase(HudConfig.INSTANCE.twitchToastPosition);
-        int topMargin = twitchActiveAtTop ? 46 : 14;
-        renderInternal(context, screenW, screenH, now, topMargin);
+        renderInternal(context, screenW, screenH, now, getTopMargin(), true);
     }
 
-    private static void renderInternal(class_332 context, int screenW, int screenH, long now, int baseMarginY) {
+    private static int getTopMargin() {
+        boolean twitchActiveAtTop = com.example.yandexmusichud.twitch.TwitchAlertBanner.INSTANCE.isShowing() && !"BOTTOM".equalsIgnoreCase(HudConfig.INSTANCE.twitchToastPosition);
+        return twitchActiveAtTop ? 46 : 14;
+    }
+
+    private static void renderInternal(class_332 context, int screenW, int screenH, long now, int baseMarginY, boolean tickQueue) {
         DonationAlertQueue queue = DonationAlertQueue.INSTANCE;
-        queue.update();
+        if (tickQueue) {
+            queue.update();
+        }
 
         if (!queue.isShowing()) {
             return;

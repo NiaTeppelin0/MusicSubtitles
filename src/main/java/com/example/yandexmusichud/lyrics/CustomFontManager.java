@@ -36,10 +36,13 @@ import org.joml.Matrix4fc;
 public class CustomFontManager {
     private static final List<FontInfo> ALL_FONTS = new ArrayList<FontInfo>();
     private static final Map<String, FontInfo> FONTS_BY_ID = new LinkedHashMap<String, FontInfo>();
+    private static volatile List<FontInfo> ALL_FONTS_SNAPSHOT = List.of();
+    private static volatile Map<String, FontInfo> FONTS_BY_ID_SNAPSHOT = Map.of();
     private static final Map<String, class_2960> PREVIEW_CACHE = new ConcurrentHashMap<String, class_2960>();
     private static final Map<String, CustomGlyph> GLYPH_CACHE = new ConcurrentHashMap<String, CustomGlyph>();
-    private static Font FALLBACK_CYRILLIC = null;
-    private static boolean initialized = false;
+    private static final java.util.concurrent.atomic.AtomicLong NEXT_TEX_ID = new java.util.concurrent.atomic.AtomicLong(1L);
+    private static volatile Font FALLBACK_CYRILLIC = null;
+    private static volatile boolean initialized = false;
 
     public static class FontInfo {
         public final String id;
@@ -238,6 +241,8 @@ public class CustomFontManager {
         for (FontInfo fi : sysOther) {
             addFont(fi);
         }
+        ALL_FONTS_SNAPSHOT = List.copyOf(ALL_FONTS);
+        FONTS_BY_ID_SNAPSHOT = Map.copyOf(FONTS_BY_ID);
     }
 
     private static void addFont(FontInfo info) {
@@ -249,7 +254,7 @@ public class CustomFontManager {
         if (!initialized) {
             init();
         }
-        return Collections.unmodifiableList(ALL_FONTS);
+        return ALL_FONTS_SNAPSHOT;
     }
 
     public static FontInfo getFontInfo(String fontId) {
@@ -257,9 +262,9 @@ public class CustomFontManager {
             init();
         }
         if (fontId == null) {
-            return FONTS_BY_ID.get("minecraft:default");
+            return FONTS_BY_ID_SNAPSHOT.get("minecraft:default");
         }
-        return FONTS_BY_ID.get(fontId.trim().toLowerCase(Locale.ROOT));
+        return FONTS_BY_ID_SNAPSHOT.get(fontId.trim().toLowerCase(Locale.ROOT));
     }
 
     public static boolean isCustomFont(String fontId) {
@@ -304,6 +309,13 @@ public class CustomFontManager {
         if (cached != null) {
             return cached;
         }
+        class_310 mc = class_310.method_1551();
+        if (mc == null || mc.method_1531() == null || !mc.method_18854()) {
+            return null;
+        }
+        class_1011 nativeImg = null;
+        class_1043 tex = null;
+        boolean registered = false;
         try {
             int w = 1200;
             int h = 64;
@@ -350,7 +362,7 @@ public class CustomFontManager {
             g.drawString(sample, 8, baseline);
             g.dispose();
 
-            class_1011 nativeImg = new class_1011(w, h, false);
+            nativeImg = new class_1011(w, h, false);
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
                     int argb = img.getRGB(x, y);
@@ -362,13 +374,22 @@ public class CustomFontManager {
                     nativeImg.method_61941(x, y, abgr);
                 }
             }
-            class_1043 tex = new class_1043(() -> "preview_" + info.id, nativeImg);
-            class_2960 texUri = class_2960.method_60655("yandexmusichud", "font_prev_" + Integer.toUnsignedString(info.id.hashCode(), 16));
-            class_310.method_1551().method_1531().method_4616(texUri, (class_1044)tex);
+            tex = new class_1043(() -> "preview_" + info.id, nativeImg);
+            class_2960 texUri = class_2960.method_60655("yandexmusichud", "font_prev_" + NEXT_TEX_ID.getAndIncrement());
+            mc.method_1531().method_4616(texUri, (class_1044)tex);
             PREVIEW_CACHE.put(info.id, texUri);
+            registered = true;
             return texUri;
         } catch (Exception e) {
             return null;
+        } finally {
+            if (!registered) {
+                if (tex != null) {
+                    try { tex.close(); } catch (Throwable ignored) {}
+                } else if (nativeImg != null) {
+                    try { nativeImg.close(); } catch (Throwable ignored) {}
+                }
+            }
         }
     }
 
@@ -404,6 +425,13 @@ public class CustomFontManager {
                 return new CustomGlyph(null, 4.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0);
             }
         }
+        class_310 mc = class_310.method_1551();
+        if (mc == null || mc.method_1531() == null || !mc.method_18854()) {
+            return null;
+        }
+        class_1011 nativeImg = null;
+        class_1043 tex = null;
+        boolean registered = false;
         try {
             Font fontToUse = baseFont;
             if (!fontToUse.canDisplay(c)) {
@@ -437,7 +465,7 @@ public class CustomFontManager {
             g.drawString(String.valueOf(c), pad, pad + ascent);
             g.dispose();
 
-            class_1011 nativeImg = new class_1011(imgW, imgH, false);
+            nativeImg = new class_1011(imgW, imgH, false);
             for (int y = 0; y < imgH; y++) {
                 for (int x = 0; x < imgW; x++) {
                     int argb = img.getRGB(x, y);
@@ -450,9 +478,10 @@ public class CustomFontManager {
                 }
             }
 
-            class_1043 tex = new class_1043(() -> "glyph_" + cacheKey, nativeImg);
-            class_2960 texUri = class_2960.method_60655("yandexmusichud", "glyph_" + Integer.toUnsignedString(cacheKey.hashCode(), 16));
-            class_310.method_1551().method_1531().method_4616(texUri, (class_1044)tex);
+            tex = new class_1043(() -> "glyph_" + cacheKey, nativeImg);
+            class_2960 texUri = class_2960.method_60655("yandexmusichud", "glyph_" + NEXT_TEX_ID.getAndIncrement());
+            mc.method_1531().method_4616(texUri, (class_1044)tex);
+            registered = true;
 
             float scale = 9.0f / (float)totalH;
             float advance = Math.max(1.0f, (float)charW * scale);
@@ -466,6 +495,14 @@ public class CustomFontManager {
             return glyph;
         } catch (Exception e) {
             return null;
+        } finally {
+            if (!registered) {
+                if (tex != null) {
+                    try { tex.close(); } catch (Throwable ignored) {}
+                } else if (nativeImg != null) {
+                    try { nativeImg.close(); } catch (Throwable ignored) {}
+                }
+            }
         }
     }
 
@@ -536,23 +573,30 @@ public class CustomFontManager {
     }
 
     private static Font getFallbackFont(char c) {
-        if (FALLBACK_CYRILLIC == null) {
-            String[] fallbacks = {"Segoe UI", "Arial", "Calibri", "Verdana", "Tahoma"};
-            for (String fName : fallbacks) {
-                try {
-                    Font f = new Font(fName, Font.PLAIN, 36);
-                    if (f.canDisplay('А') && f.canDisplay('я')) {
-                        FALLBACK_CYRILLIC = f;
-                        break;
+        Font cached = FALLBACK_CYRILLIC;
+        if (cached == null) {
+            synchronized (CustomFontManager.class) {
+                cached = FALLBACK_CYRILLIC;
+                if (cached == null) {
+                    String[] fallbacks = {"Segoe UI", "Arial", "Calibri", "Verdana", "Tahoma"};
+                    for (String fName : fallbacks) {
+                        try {
+                            Font f = new Font(fName, Font.PLAIN, 36);
+                            if (f.canDisplay('А') && f.canDisplay('я')) {
+                                cached = f;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
                     }
-                } catch (Exception ignored) {}
-            }
-            if (FALLBACK_CYRILLIC == null) {
-                FALLBACK_CYRILLIC = new Font(Font.SANS_SERIF, Font.PLAIN, 36);
+                    if (cached == null) {
+                        cached = new Font(Font.SANS_SERIF, Font.PLAIN, 36);
+                    }
+                    FALLBACK_CYRILLIC = cached;
+                }
             }
         }
-        if (FALLBACK_CYRILLIC.canDisplay(c)) {
-            return FALLBACK_CYRILLIC;
+        if (cached.canDisplay(c)) {
+            return cached;
         }
         return null;
     }

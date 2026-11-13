@@ -10,6 +10,9 @@ public class VoiceChatCompat {
     public static final String CATEGORY_ID = "music_subtitles";
     private static boolean initialized = false;
     private static boolean voiceChatPresent = false;
+    private static volatile VoicechatClientApi cachedApi = null;
+    private static volatile long lastVolumeCheckTime = 0L;
+    private static volatile float cachedVolumeMultiplier = 1.0f;
     private static String currentRoom = null;
     private static String currentHost = null;
 
@@ -35,9 +38,20 @@ public class VoiceChatCompat {
         return voiceChatPresent;
     }
 
+    private static VoicechatClientApi getApi() {
+        VoicechatClientApi api = cachedApi;
+        if (api == null) {
+            api = VoicechatClientApiImpl.instance();
+            if (api != null) {
+                cachedApi = api;
+            }
+        }
+        return api;
+    }
+
     private static void registerCategorySafe() {
         try {
-            VoicechatClientApi api = VoicechatClientApiImpl.instance();
+            VoicechatClientApi api = getApi();
             if (api != null) {
                 VolumeCategory category = api.volumeCategoryBuilder()
                     .setId(CATEGORY_ID)
@@ -54,15 +68,22 @@ public class VoiceChatCompat {
         if (!isVoiceChatAvailable()) {
             return 1.0f;
         }
+        long now = System.currentTimeMillis();
+        if (now - lastVolumeCheckTime < 150L) {
+            return cachedVolumeMultiplier;
+        }
+        lastVolumeCheckTime = now;
         try {
-            VoicechatClientApi api = VoicechatClientApiImpl.instance();
+            VoicechatClientApi api = getApi();
             if (api != null && api.getVolumeConfig() != null) {
                 double vol = api.getVolumeConfig().getCategoryVolume(CATEGORY_ID);
-                return (float) Math.max(0.0, Math.min(2.0, vol));
+                float mult = (float) Math.max(0.0, Math.min(2.0, vol));
+                cachedVolumeMultiplier = mult;
+                return mult;
             }
         } catch (Throwable ignored) {
         }
-        return 1.0f;
+        return cachedVolumeMultiplier;
     }
 
     public static float getEffectiveVolume(float baseModVolume) {

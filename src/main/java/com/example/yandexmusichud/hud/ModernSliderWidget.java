@@ -1,6 +1,7 @@
 package com.example.yandexmusichud.hud;
 
 import com.example.yandexmusichud.hud.MusicHudRenderer;
+import java.util.Locale;
 import java.util.function.Consumer;
 import net.minecraft.class_2561;
 import net.minecraft.class_310;
@@ -12,18 +13,44 @@ import net.minecraft.class_357;
 public class ModernSliderWidget
 extends class_357 {
     private final String label;
+    private final String cleanLabel;
     private final Formatter formatter;
     private final Consumer<Double> onValueChange;
     private Runnable onRelease;
     private float hoverProgress = 0.0f;
     private long lastRenderTime = 0L;
+    private double cachedVal = Double.NaN;
+    private String cachedValText = "";
+    private class_2561 cachedValComponent = class_2561.method_43473();
+    private int cachedMaxLblW = -1;
+    private String cachedDrawLbl = "";
 
     public ModernSliderWidget(int x, int y, int width, int height, String label, double initialValue, Formatter formatter, Consumer<Double> onValueChange) {
         super(x, y, width, height, (class_2561)class_2561.method_43473(), class_3532.method_15350((double)initialValue, (double)0.0, (double)1.0));
         this.label = label;
+        String cl = label != null ? label.trim() : "";
+        if (cl.endsWith(":")) {
+            cl = cl.substring(0, cl.length() - 1).trim();
+        }
+        this.cleanLabel = cl;
         this.formatter = formatter;
         this.onValueChange = onValueChange;
         this.method_25346();
+    }
+
+    private String getFormattedValText() {
+        double v = this.field_22753;
+        if (Double.compare(v, this.cachedVal) != 0) {
+            String formatted = this.formatter != null ? this.formatter.format(v) : String.format(Locale.ROOT, "%.2f", v);
+            formatted = formatted != null ? formatted.trim() : "";
+            if (formatted.startsWith(":")) {
+                formatted = formatted.substring(1).trim();
+            }
+            this.cachedVal = v;
+            this.cachedValText = formatted;
+            this.cachedValComponent = class_2561.method_43470(formatted);
+        }
+        return this.cachedValText;
     }
 
     public ModernSliderWidget setOnRelease(Runnable onRelease) {
@@ -44,11 +71,8 @@ extends class_357 {
     }
 
     protected void method_25346() {
-        if (this.formatter != null) {
-            this.method_25355((class_2561)class_2561.method_43470((String)(this.label + this.formatter.format(this.field_22753))));
-        } else {
-            this.method_25355((class_2561)class_2561.method_43470((String)(this.label + String.format("%.2f", this.field_22753))));
-        }
+        String formatted = this.formatter != null ? this.formatter.format(this.field_22753) : String.format(Locale.ROOT, "%.2f", this.field_22753);
+        this.method_25355((class_2561)class_2561.method_43470((String)(this.label + formatted)));
     }
 
     protected void method_25344() {
@@ -110,22 +134,18 @@ extends class_357 {
         MusicHudRenderer.renderRoundedRect(context, knobX - knobR, knobY - knobR, knobR * 2, knobR * 2, knobR, knobCol);
         MusicHudRenderer.renderRoundedBorder(context, knobX - knobR, knobY - knobR, knobR * 2, knobR * 2, knobR, 0xFFFFFFFF, 0x8838BDF8);
 
-        String valText = this.formatter != null ? this.formatter.format(this.field_22753) : String.format("%.2f", this.field_22753);
-        if ((valText = valText.trim()).startsWith(":")) {
-            valText = valText.substring(1).trim();
-        }
-        String cleanLabel = this.label != null ? this.label.trim() : "";
-        if (cleanLabel.endsWith(":")) {
-            cleanLabel = cleanLabel.substring(0, cleanLabel.length() - 1).trim();
-        }
+        String valText = this.getFormattedValText();
         int textY = sy + 3;
-        if (!cleanLabel.isEmpty() && sw >= 64) {
+        if (!this.cleanLabel.isEmpty() && sw >= 64) {
             int valW = textRenderer.method_1727(valText);
             int maxLblW = Math.max(16, sw - valW - 14);
-            String drawLbl = textRenderer.method_1727(cleanLabel) > maxLblW ? textRenderer.method_27523(cleanLabel, maxLblW) : cleanLabel;
+            if (maxLblW != this.cachedMaxLblW) {
+                this.cachedMaxLblW = maxLblW;
+                this.cachedDrawLbl = textRenderer.method_1727(this.cleanLabel) > maxLblW ? textRenderer.method_27523(this.cleanLabel, maxLblW) : this.cleanLabel;
+            }
             int lblColor = activeOrHovered ? 0xFFF8FAFC : 0xFFCBD5E1;
             int valColor = activeOrHovered ? 0xFF38BDF8 : 0xFF94A3B8;
-            context.method_51433(textRenderer, drawLbl, sx + 7, textY, lblColor, false);
+            context.method_51433(textRenderer, this.cachedDrawLbl, sx + 7, textY, lblColor, false);
             context.method_51433(textRenderer, valText, sx + sw - valW - 7, textY, valColor, false);
         } else {
             int textColor = activeOrHovered ? -1 : -1710619;
@@ -143,7 +163,7 @@ extends class_357 {
                 MusicHudRenderer.renderRoundedRect(context, bubbleX - 1, bubbleY - 1, bubbleW + 2, bubbleH + 2, 5, (bAlpha / 4) << 24 | 0x38BDF8);
                 MusicHudRenderer.renderRoundedRect(context, bubbleX, bubbleY, bubbleW, bubbleH, 4, bAlpha << 24 | 0x0A0D14);
                 MusicHudRenderer.renderRoundedBorder(context, bubbleX, bubbleY, bubbleW, bubbleH, 4, (int)(this.hoverProgress * 200.0f) << 24 | 0x38BDF8, (int)(this.hoverProgress * 120.0f) << 24 | 0x334155);
-                context.method_27534(textRenderer, (class_2561)class_2561.method_43470((String)valText), bubbleX + bubbleW / 2, bubbleY + 2, bAlpha << 24 | 0xFFFFFF);
+                context.method_27534(textRenderer, this.cachedValComponent, bubbleX + bubbleW / 2, bubbleY + 2, bAlpha << 24 | 0xFFFFFF);
             }
         }
     }

@@ -41,6 +41,7 @@ public class HelperProcessManager {
     private double linuxBaseVolume = -1.0;
     private int macSpotifyBaseVol = -1;
     private int macMusicBaseVol = -1;
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3L)).build();
     private final ScheduledExecutorService duckExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "MusicSubtitles-DuckBridge");
         t.setDaemon(true);
@@ -86,7 +87,7 @@ public class HelperProcessManager {
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                     try {
                         if (INSTANCE != null) {
-                            INSTANCE.stop();
+                            INSTANCE.shutdown();
                         }
                     } catch (Throwable ignored) {}
                 }, "MusicSubtitles-HelperShutdownHook"));
@@ -114,9 +115,8 @@ public class HelperProcessManager {
             return false;
         }
         try {
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(700L)).build();
             HttpRequest request = HttpRequest.newBuilder().uri(URI.create("http://127.0.0.1:" + checkPort + "/now-playing")).GET().timeout(Duration.ofMillis(700L)).build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
             return response.statusCode() == 200;
         }
         catch (Exception e) {
@@ -131,7 +131,7 @@ public class HelperProcessManager {
                 try {
                     long pid = Long.parseLong(Files.readString(pidFile).trim());
                     ProcessHandle.of(pid).ifPresent(ph -> {
-                        String cmd = ph.info().command().orElse("").toLowerCase();
+                        String cmd = ph.info().command().orElse("").toLowerCase(Locale.ROOT);
                         if (cmd.contains("yandexmusichelper")) {
                             ph.destroyForcibly();
                         }
@@ -147,7 +147,7 @@ public class HelperProcessManager {
         try {
             ProcessHandle.allProcesses().forEach(ph -> {
                 try {
-                    String cmd = ph.info().command().orElse("").toLowerCase();
+                    String cmd = ph.info().command().orElse("").toLowerCase(Locale.ROOT);
                     if (cmd.endsWith("yandexmusichelper.exe")) {
                         ph.destroyForcibly();
                     }
@@ -156,7 +156,7 @@ public class HelperProcessManager {
         } catch (Exception ignored) {}
     }
 
-    public int start() {
+    public synchronized int start() {
         INSTANCE = this;
         int existingPort = this.readPortFromTempFile();
         if (existingPort > 0 && this.isHelperAlreadyRunning() && this.isPortAlive(existingPort)) {
@@ -165,7 +165,7 @@ public class HelperProcessManager {
             return this.port;
         }
         this.killStaleHelperProcesses();
-        String os = System.getProperty("os.name", "").toLowerCase();
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("linux")) {
             int linuxPort = this.startLinuxMprisBridge();
             if (linuxPort > 0) {
@@ -229,12 +229,16 @@ public class HelperProcessManager {
 
     private static String runCommandWithTimeout(List<String> cmd, long timeoutMs) {
         Process p = null;
+        CompletableFuture<byte[]> reader = null;
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             p = pb.start();
+            try {
+                p.getOutputStream().close();
+            } catch (Exception ignored) {}
             Process procRef = p;
-            CompletableFuture<byte[]> reader = CompletableFuture.supplyAsync(() -> {
+            reader = CompletableFuture.supplyAsync(() -> {
                 try (InputStream is = procRef.getInputStream()) {
                     return is.readAllBytes();
                 } catch (Exception e) {
@@ -243,7 +247,6 @@ public class HelperProcessManager {
             });
             boolean finished = p.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
             if (!finished) {
-                p.destroyForcibly();
                 return null;
             }
             if (p.exitValue() != 0) {
@@ -252,10 +255,14 @@ public class HelperProcessManager {
             byte[] bytes = reader.get(150L, TimeUnit.MILLISECONDS);
             return new String(bytes, StandardCharsets.UTF_8).trim();
         } catch (Exception e) {
+            return null;
+        } finally {
+            if (reader != null && !reader.isDone()) {
+                reader.cancel(true);
+            }
             if (p != null && p.isAlive()) {
                 p.destroyForcibly();
             }
-            return null;
         }
     }
 
@@ -467,7 +474,7 @@ public class HelperProcessManager {
                 this.cachedNowPlayingJson = "{\"isActive\":false,\"status\":\"stopped\"}";
                 return;
             }
-            String statusRaw = parts[0].trim().toLowerCase();
+            String statusRaw = parts[0].trim().toLowerCase(Locale.ROOT);
             String status = statusRaw.equals("playing") ? "playing" : (statusRaw.equals("paused") ? "paused" : "stopped");
             String artist = parts.length > 1 ? parts[1].trim() : "";
             String title = parts.length > 2 ? parts[2].trim() : "";
@@ -757,7 +764,7 @@ public class HelperProcessManager {
                 return;
             }
             String platformName = parts[0].trim();
-            String statusRaw = parts[1].trim().toLowerCase();
+            String statusRaw = parts[1].trim().toLowerCase(Locale.ROOT);
             String status = statusRaw.contains("play") ? "playing" : (statusRaw.contains("pause") ? "paused" : "stopped");
             String artist = parts[2].trim();
             String title = parts[3].trim();
@@ -856,9 +863,8 @@ public class HelperProcessManager {
                         bytes = Files.readAllBytes(p);
                     }
                 } else if (artUrl.startsWith("http://") || artUrl.startsWith("https://")) {
-                    HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
                     HttpRequest req = HttpRequest.newBuilder().uri(URI.create(artUrl)).timeout(Duration.ofSeconds(4)).GET().build();
-                    HttpResponse<byte[]> res = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
+                    HttpResponse<byte[]> res = SHARED_HTTP_CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
                     if (res.statusCode() == 200) {
                         bytes = res.body();
                     }
@@ -1033,7 +1039,7 @@ public class HelperProcessManager {
         return sb.toString();
     }
 
-    public void stop() {
+    public synchronized void stop() {
         this.started = false;
         this.closeDuckHelper();
         if (this.linuxPoller != null) {
@@ -1058,9 +1064,8 @@ public class HelperProcessManager {
         }
         if (this.port > 0) {
             try {
-                HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(800L)).build();
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create("http://127.0.0.1:" + this.port + "/shutdown")).POST(HttpRequest.BodyPublishers.noBody()).timeout(Duration.ofMillis(800L)).build();
-                client.send(request, HttpResponse.BodyHandlers.discarding());
+                SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
             }
             catch (Exception ignored) {}
         }
@@ -1075,6 +1080,11 @@ public class HelperProcessManager {
         }
         this.helperProcess = null;
         this.killStaleHelperProcesses();
+    }
+
+    public synchronized void shutdown() {
+        this.stop();
+        this.duckExecutor.shutdownNow();
     }
 
     private boolean isHelperAlreadyRunning() {

@@ -24,6 +24,7 @@ public class LiveCaptionServer {
     private static final int MAX_BODY_BYTES = 4 * 1024 * 1024;
     private final LyricsManager lyricsManager;
     private HttpServer server;
+    private java.util.concurrent.ExecutorService executor;
 
     public LiveCaptionServer(LyricsManager lyricsManager) {
         this.lyricsManager = lyricsManager;
@@ -32,11 +33,12 @@ public class LiveCaptionServer {
     public void start() {
         try {
             this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 38473), 0);
-            this.server.setExecutor(Executors.newCachedThreadPool(r -> {
+            this.executor = Executors.newCachedThreadPool(r -> {
                 Thread t = new Thread(r, "MusicSubtitles-CaptionServer");
                 t.setDaemon(true);
                 return t;
-            }));
+            });
+            this.server.setExecutor(this.executor);
             this.server.createContext("/captions/push", new PushHandler());
             this.server.createContext("/captions/transcript", new TranscriptHandler());
             this.server.createContext("/captions/status", new StatusHandler());
@@ -57,6 +59,15 @@ public class LiveCaptionServer {
 
             }
             this.server = null;
+        }
+        if (this.executor != null) {
+            try {
+                this.executor.shutdownNow();
+            }
+            catch (Exception exception) {
+
+            }
+            this.executor = null;
         }
     }
 
@@ -149,8 +160,8 @@ public class LiveCaptionServer {
                     return;
                 }
                 JsonObject json = JsonParser.parseString((String)body).getAsJsonObject();
-                String text = json.has("text") ? json.get("text").getAsString() : "";
-                long l = durationMs = json.has("durationMs") ? json.get("durationMs").getAsLong() : 3500L;
+                String text = json.has("text") && json.get("text").isJsonPrimitive() ? json.get("text").getAsString() : "";
+                long l = durationMs = json.has("durationMs") && json.get("durationMs").isJsonPrimitive() ? json.get("durationMs").getAsLong() : 3500L;
                 if (!text.isEmpty()) {
                     LiveCaptionServer.this.lyricsManager.pushLiveCaption(text, durationMs);
                     LiveCaptionServer.sendResponse(exchange, 200, "{\"success\":true}");
@@ -159,7 +170,9 @@ public class LiveCaptionServer {
                 }
             }
             catch (Exception e) {
-                LiveCaptionServer.sendResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
+                JsonObject err = new JsonObject();
+                err.addProperty("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                LiveCaptionServer.sendResponse(exchange, 500, err.toString());
             }
         }
     }
@@ -191,16 +204,16 @@ public class LiveCaptionServer {
                     return;
                 }
                 JsonObject json = JsonParser.parseString((String)body).getAsJsonObject();
-                String videoTitle = json.has("videoTitle") ? json.get("videoTitle").getAsString() : "";
+                String videoTitle = json.has("videoTitle") && json.get("videoTitle").isJsonPrimitive() ? json.get("videoTitle").getAsString() : "";
                 ArrayList<LyricLine> lines = new ArrayList<LyricLine>();
                 if (json.has("lines") && json.get("lines").isJsonArray()) {
                     JsonArray arr = json.getAsJsonArray("lines");
                     for (JsonElement elem : arr) {
                         if (!elem.isJsonObject()) continue;
                         JsonObject obj = elem.getAsJsonObject();
-                        long startMs = obj.has("startMs") ? obj.get("startMs").getAsLong() : 0L;
-                        long endMs = obj.has("endMs") ? obj.get("endMs").getAsLong() : startMs + 3500L;
-                        String text = obj.has("text") ? obj.get("text").getAsString() : "";
+                        long startMs = obj.has("startMs") && obj.get("startMs").isJsonPrimitive() ? obj.get("startMs").getAsLong() : 0L;
+                        long endMs = obj.has("endMs") && obj.get("endMs").isJsonPrimitive() ? obj.get("endMs").getAsLong() : startMs + 3500L;
+                        String text = obj.has("text") && obj.get("text").isJsonPrimitive() ? obj.get("text").getAsString() : "";
                         if (text.trim().isEmpty()) continue;
                         lines.add(new LyricLine(startMs, endMs, text.trim(), null));
                     }
@@ -213,7 +226,9 @@ public class LiveCaptionServer {
                 }
             }
             catch (Exception e) {
-                LiveCaptionServer.sendResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
+                JsonObject err = new JsonObject();
+                err.addProperty("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                LiveCaptionServer.sendResponse(exchange, 500, err.toString());
             }
         }
     }

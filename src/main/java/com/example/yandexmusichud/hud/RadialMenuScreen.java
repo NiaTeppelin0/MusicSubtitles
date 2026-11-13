@@ -635,7 +635,11 @@ public class RadialMenuScreen extends class_437 {
         if (hasTrack && trackState.durationMs() > 0L) {
             long posSec = Math.max(0L, trackState.getInterpolatedPositionMs() / 1000L);
             long durSec = Math.max(1L, trackState.durationMs() / 1000L);
-            String timeStr = String.format("%d:%02d / %d:%02d", posSec / 60L, posSec % 60L, durSec / 60L, durSec % 60L);
+            long pm = posSec / 60L;
+            long ps = posSec % 60L;
+            long dm = durSec / 60L;
+            long ds = durSec % 60L;
+            String timeStr = pm + (ps < 10L ? ":0" : ":") + ps + " / " + dm + (ds < 10L ? ":0" : ":") + ds;
             timeW = tr.method_1727(timeStr) + 6;
             context.method_51433(tr, timeStr, tagX + tagW - timeW - 2, tagY + 23, (int)(alpha * 190.0f) << 24 | 0x94A3B8, false);
         }
@@ -666,7 +670,7 @@ public class RadialMenuScreen extends class_437 {
     }
 
     private void renderBottomHint(class_332 context, float alpha) {
-        String keyName = MusicControlKeybinds.radialMenuKey.method_16007().getString().toUpperCase();
+        String keyName = MusicControlKeybinds.radialMenuKey.method_16007().getString().toUpperCase(java.util.Locale.ROOT);
         String hint = "\u00a77\u041a\u043e\u043b\u0451\u0441\u0438\u043a\u043e \u2014 \u0432\u044b\u0431\u043e\u0440   \u00a78|   \u00a7b\u041e\u0442\u043f\u0443\u0441\u0442\u0438\u0442\u0435 [\u00a7f" + keyName + "\u00a7b] \u0438\u043b\u0438 \u041b\u041a\u041c   \u00a78|   \u00a77ESC \u2014 \u043e\u0442\u043c\u0435\u043d\u0430";
         int hw = this.field_22793.method_1727(hint);
         int pillW = hw + 16;

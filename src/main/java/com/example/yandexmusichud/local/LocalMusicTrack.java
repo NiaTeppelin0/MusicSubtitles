@@ -36,7 +36,7 @@ public class LocalMusicTrack {
         this.artist = artist != null && !artist.isBlank() ? artist.trim() : "Моя музыка";
         this.album = album != null && !album.isBlank() ? album.trim() : "Локальный альбом";
         this.durationMs = Math.max(0L, durationMs);
-        this.format = format != null ? format.toUpperCase() : "AUDIO";
+        this.format = format != null ? format.toUpperCase(java.util.Locale.ROOT) : "AUDIO";
         this.lrcPath = lrcPath;
         this.coverArt = coverArt;
     }
@@ -90,7 +90,7 @@ public class LocalMusicTrack {
 
     public static LocalMusicTrack fromFile(Path path) {
         String fname = path.getFileName().toString();
-        String lower = fname.toLowerCase();
+        String lower = fname.toLowerCase(java.util.Locale.ROOT);
         String fmt = "MP3";
         if (lower.endsWith(".wav")) {
             fmt = "WAV";

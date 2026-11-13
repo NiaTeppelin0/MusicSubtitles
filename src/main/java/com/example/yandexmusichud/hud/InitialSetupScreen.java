@@ -504,7 +504,7 @@ public class InitialSetupScreen extends class_437 {
                 };
 
                 String sourcePreset = HudConfig.INSTANCE.musicSourcePreset == null ? "ALL" : HudConfig.INSTANCE.musicSourcePreset;
-                int selectedIdx = switch (sourcePreset.toUpperCase()) {
+                int selectedIdx = switch (sourcePreset.toUpperCase(java.util.Locale.ROOT)) {
                     case "YANDEX" -> 1;
                     case "SPOTIFY" -> 2;
                     case "LOCAL" -> 3;

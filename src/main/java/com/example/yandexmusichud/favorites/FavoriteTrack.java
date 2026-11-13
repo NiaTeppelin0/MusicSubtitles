@@ -1,5 +1,7 @@
 package com.example.yandexmusichud.favorites;
 
+import java.util.Locale;
+
 public class FavoriteTrack {
     public String id;
     public String title;
@@ -27,8 +29,8 @@ public class FavoriteTrack {
     }
 
     public static String createId(String artist, String title) {
-        String a = artist != null ? artist.trim().toLowerCase() : "";
-        String t = title != null ? title.trim().toLowerCase() : "";
+        String a = artist != null ? artist.trim().toLowerCase(Locale.ROOT) : "";
+        String t = title != null ? title.trim().toLowerCase(Locale.ROOT) : "";
         return a + "___" + t;
     }
 }

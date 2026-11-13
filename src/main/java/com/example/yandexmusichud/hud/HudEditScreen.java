@@ -102,6 +102,7 @@ extends class_437 {
     private long lastNiaClickTime = 0L;
     private final List<HelpEntry> helpEntries = new ArrayList<HelpEntry>();
     private final class_437 parent;
+    private long lastRenderMs = 0L;
     private float screenShake = 0.0f;
     private float curTiltX = 0.0f;
     private float curTiltY = 0.0f;
@@ -1152,7 +1153,7 @@ extends class_437 {
         if (s == null) {
             return "Тёмный мин.";
         }
-        return switch (s.toUpperCase()) {
+        return switch (s.toUpperCase(java.util.Locale.ROOT)) {
             case "GLASS_AMBIENT" -> "Стекло";
             case "VINYL_DECK" -> "Винил-дека";
             case "DYNAMIC_ISLAND" -> "Остров";
@@ -1165,7 +1166,7 @@ extends class_437 {
         if (a == null) {
             return "Караоке";
         }
-        return switch (a.toUpperCase()) {
+        return switch (a.toUpperCase(java.util.Locale.ROOT)) {
             case "WAVE_FLOAT" -> "Волна";
             case "ELASTIC_POP" -> "Пружина";
             case "PULSE_GLOW" -> "Пульс";
@@ -1181,7 +1182,7 @@ extends class_437 {
         if (a == null) {
             a = "KARAOKE_BOUNCE";
         }
-        HudConfig.INSTANCE.subtitlesAnimation = switch (a.toUpperCase()) {
+        HudConfig.INSTANCE.subtitlesAnimation = switch (a.toUpperCase(java.util.Locale.ROOT)) {
             case "KARAOKE_BOUNCE" -> "WAVE_FLOAT";
             case "WAVE_FLOAT" -> "ELASTIC_POP";
             case "ELASTIC_POP" -> "PULSE_GLOW";
@@ -1294,6 +1295,8 @@ extends class_437 {
     public void method_25394(class_332 context, int mouseX, int mouseY, float delta) {
         class_310 mc = class_310.method_1551();
         long nowMs = System.currentTimeMillis();
+        float dtSec = this.lastRenderMs > 0L ? Math.min(0.1f, Math.max(0.001f, (float)(nowMs - this.lastRenderMs) / 1000.0f)) : 0.016f;
+        this.lastRenderMs = nowMs;
         TrackState ts = NowPlayingClient.INSTANCE != null ? NowPlayingClient.INSTANCE.getState() : null;
         boolean isPlaying = ts != null && ts.isActive() && !"stopped".equalsIgnoreCase(ts.status()) && !"paused".equalsIgnoreCase(ts.status());
         float beatPhase = isPlaying ? (float)((double)(ts.getInterpolatedPositionMs() % 500L) / 500.0) : (float)((double)(nowMs % 600L) / 600.0);
@@ -1301,7 +1304,7 @@ extends class_437 {
         if (isPlaying && HudConfig.INSTANCE.beatBounce && beatEnergy > 0.65f) {
             this.screenShake = Math.max(this.screenShake, beatEnergy * 1.8f);
         }
-        this.screenShake *= 0.86f;
+        this.screenShake *= (float)Math.pow(0.86, dtSec * 60.0f);
         float shakeX = (float)Math.sin((double)nowMs * 0.055) * this.screenShake;
         float shakeY = (float)Math.cos((double)nowMs * 0.075) * this.screenShake;
         float slamBounceX = 0.0f;
@@ -1313,8 +1316,9 @@ extends class_437 {
         }
         float targetTiltX = class_3532.method_15363((float)(mouseX - this.field_22789 / 2) / ((float)this.field_22789 / 2.0f), -1.0f, 1.0f);
         float targetTiltY = class_3532.method_15363((float)(mouseY - this.field_22790 / 2) / ((float)this.field_22790 / 2.0f), -1.0f, 1.0f);
-        this.curTiltX += (targetTiltX - this.curTiltX) * 0.12f;
-        this.curTiltY += (targetTiltY - this.curTiltY) * 0.12f;
+        float tiltLerp = Math.min(1.0f, dtSec * 7.5f);
+        this.curTiltX += (targetTiltX - this.curTiltX) * tiltLerp;
+        this.curTiltY += (targetTiltY - this.curTiltY) * tiltLerp;
         if (Math.abs(mouseX - this.lastMouseX) > 2 || Math.abs(mouseY - this.lastMouseY) > 2) {
             if (++this.sparkleTimer % 3 == 0) {
                 this.spawnCursorSparkle(mouseX, mouseY);
@@ -1619,8 +1623,9 @@ extends class_437 {
         int g = curColor >> 8 & 0xFF;
         int b = curColor & 0xFF;
 
-        context.method_51433(this.field_22793, String.format("§7HEX: §e#%06X", curColor & 0xFFFFFF), textX, cardY + 2, -1, false);
-        context.method_51433(this.field_22793, String.format("§c%d §a%d §b%d", r, g, b), textX, cardY + 12, -1, false);
+        String hexStr = Integer.toHexString(0x1000000 | (curColor & 0xFFFFFF)).substring(1).toUpperCase(java.util.Locale.ROOT);
+        context.method_51433(this.field_22793, "§7HEX: §e#" + hexStr, textX, cardY + 2, -1, false);
+        context.method_51433(this.field_22793, "§c" + r + " §a" + g + " §b" + b, textX, cardY + 12, -1, false);
     }
 
     private void renderSessionStatsCard(class_332 context, int cardX, int cardY, int cardW, int cardH, boolean isPlaying, long nowMs) {
@@ -2100,7 +2105,7 @@ extends class_437 {
         MusicHudRenderer.renderRoundedRect(context, bx, by, bw, bh, 3, 0xEE06080D);
         int borderCol = isSelected ? 0xAA10B981 : (isHovered ? 0xAA38BDF8 : 0x55334155);
         MusicHudRenderer.renderRoundedBorder(context, bx, by, bw, bh, 3, borderCol, borderCol);
-        String k = key != null ? key.toUpperCase() : "";
+        String k = key != null ? key.toUpperCase(java.util.Locale.ROOT) : "";
         if ("HUD_STYLE".equals(dropdownId)) {
             switch (k) {
                 case "MINIMAL_DARK" -> {
@@ -2230,6 +2235,7 @@ extends class_437 {
         boolean isDefaultFont = !isCustom && (font == null || font.isEmpty() || "default".equalsIgnoreCase(font) || "minecraft:default".equalsIgnoreCase(font) || "minecraft".equalsIgnoreCase(font));
         boolean isRuneFont = !isCustom && (font != null && (font.contains("alt") || font.contains("illager")));
 
+        String fontName = font != null ? font.trim() : "default";
         int textW = 0;
         int textH = 9;
         for (int i = 0; i < previewText.length(); ++i) {
@@ -2238,14 +2244,11 @@ extends class_437 {
                 CustomFontManager.CustomGlyph g = CustomFontManager.getGlyph(font, c);
                 textW += (g != null ? Math.max(1, Math.round(g.advance)) : 6);
             } else if (isDefaultFont) {
-                textW += this.field_22793.method_1727(String.valueOf(c));
+                textW += this.field_22793.method_1727(LyricsRenderer.singleCharString(c));
             } else {
-                String renderStr = isRuneFont ? LyricsRenderer.transliterateForRune(c) : String.valueOf(c);
+                String renderStr = isRuneFont ? LyricsRenderer.transliterateForRune(c) : LyricsRenderer.singleCharString(c);
                 if (renderStr.isEmpty()) renderStr = " ";
-                String fontName = font.trim();
-                class_2960 fontId = fontName.contains(":") ? class_2960.method_60654(fontName) : class_2960.method_60655("minecraft", fontName);
-                net.minecraft.class_5250 charComp = class_2561.method_43470(renderStr);
-                charComp.method_10862(net.minecraft.class_2583.field_24360.method_27704(new net.minecraft.class_11719.class_11721(fontId)));
+                net.minecraft.class_5250 charComp = LyricsRenderer.getCachedStyledChar(fontName, renderStr);
                 textW += this.field_22793.method_27525(charComp);
             }
         }
@@ -2265,7 +2268,9 @@ extends class_437 {
         MusicHudRenderer.renderRoundedBorder(context, boxX - 2, boxY - 2, boxW + 4, boxH + 4, 6, borderColor, borderColor);
         if (this.dragging2DSub) {
             boolean isCentered = Math.abs(subCenterX - this.field_22789 / 2) < 2;
-            String coordText = isCentered ? String.format("§a✦ По центру §7(X: %d%%, Y: %d%%)", (int)(HudConfig.INSTANCE.sub2DPositionX * 100.0), (int)(HudConfig.INSTANCE.sub2DPositionY * 100.0)) : String.format("§e✦ X: %d%%, Y: %d%%", (int)(HudConfig.INSTANCE.sub2DPositionX * 100.0), (int)(HudConfig.INSTANCE.sub2DPositionY * 100.0));
+            int px = (int)(HudConfig.INSTANCE.sub2DPositionX * 100.0);
+            int py = (int)(HudConfig.INSTANCE.sub2DPositionY * 100.0);
+            String coordText = (isCentered ? "§a✦ По центру §7(X: " : "§e✦ X: ") + px + "%, Y: " + py + "%";
             context.method_27534(this.field_22793, (class_2561)class_2561.method_43470(coordText), subCenterX, Math.max(16, boxY - 14), -1);
         }
         context.method_51448().pushMatrix();
@@ -2288,7 +2293,7 @@ extends class_437 {
             int charW;
             CustomFontManager.CustomGlyph g = isCustom ? CustomFontManager.getGlyph(font, c) : null;
             net.minecraft.class_5250 charComp = null;
-            String renderStr = isRuneFont ? LyricsRenderer.transliterateForRune(c) : String.valueOf(c);
+            String renderStr = isRuneFont ? LyricsRenderer.transliterateForRune(c) : LyricsRenderer.singleCharString(c);
             if (renderStr.isEmpty()) renderStr = " ";
 
             if (isCustom) {
@@ -2296,10 +2301,7 @@ extends class_437 {
             } else if (isDefaultFont) {
                 charW = this.field_22793.method_1727(renderStr);
             } else {
-                String fontName = font.trim();
-                class_2960 fontId = fontName.contains(":") ? class_2960.method_60654(fontName) : class_2960.method_60655("minecraft", fontName);
-                charComp = class_2561.method_43470(renderStr);
-                charComp.method_10862(net.minecraft.class_2583.field_24360.method_27704(new net.minecraft.class_11719.class_11721(fontId)));
+                charComp = LyricsRenderer.getCachedStyledChar(fontName, renderStr);
                 charW = this.field_22793.method_27525(charComp);
             }
 

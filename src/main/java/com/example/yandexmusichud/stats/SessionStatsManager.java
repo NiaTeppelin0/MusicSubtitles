@@ -1,6 +1,7 @@
 package com.example.yandexmusichud.stats;
 
 import com.example.yandexmusichud.network.TrackState;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.class_2561;
@@ -13,10 +14,34 @@ public class SessionStatsManager {
     private long lastTickTime = System.currentTimeMillis();
     private int totalTracksPlayed = 0;
     private String lastCountedTrackKey = "";
+    private String lastSeenRawArtist = null;
+    private String lastSeenRawTitle = null;
     private final Map<String, Integer> artistCount = new ConcurrentHashMap<String, Integer>();
     private final Map<String, Integer> trackCount = new ConcurrentHashMap<String, Integer>();
 
     private SessionStatsManager() {
+    }
+
+    private void recordActiveTrack(String rawArtist, String rawTitle) {
+        String artist = rawArtist != null ? rawArtist.trim() : "";
+        String title = rawTitle != null ? rawTitle.trim() : "";
+        if (title.isEmpty()) {
+            return;
+        }
+        if (artist.equals(this.lastSeenRawArtist) && title.equals(this.lastSeenRawTitle)) {
+            return;
+        }
+        this.lastSeenRawArtist = artist;
+        this.lastSeenRawTitle = title;
+        String trackKey = (artist + "___" + title).toLowerCase(Locale.ROOT);
+        if (!trackKey.equals(this.lastCountedTrackKey)) {
+            this.lastCountedTrackKey = trackKey;
+            ++this.totalTracksPlayed;
+            if (!artist.isEmpty()) {
+                this.artistCount.merge(artist, 1, Integer::sum);
+            }
+            this.trackCount.merge(title, 1, Integer::sum);
+        }
     }
 
     public void onTick(TrackState state) {
@@ -31,17 +56,7 @@ public class SessionStatsManager {
             }
             com.example.yandexmusichud.local.LocalMusicTrack curTrack = local.getCurrentTrack();
             if (curTrack != null) {
-                String artist = curTrack.getArtist() != null ? curTrack.getArtist().trim() : "";
-                String title = curTrack.getTitle() != null ? curTrack.getTitle().trim() : "";
-                String trackKey = (artist + "___" + title).toLowerCase();
-                if (!title.isEmpty() && !trackKey.equals(this.lastCountedTrackKey)) {
-                    this.lastCountedTrackKey = trackKey;
-                    ++this.totalTracksPlayed;
-                    if (!artist.isEmpty()) {
-                        this.artistCount.merge(artist, 1, Integer::sum);
-                    }
-                    this.trackCount.merge(title, 1, Integer::sum);
-                }
+                this.recordActiveTrack(curTrack.getArtist(), curTrack.getTitle());
             }
             return;
         }
@@ -49,17 +64,7 @@ public class SessionStatsManager {
             if (delta > 0L && delta < 5000L) {
                 this.totalActiveListeningMs += delta;
             }
-            String artist = state.artist() != null ? state.artist().trim() : "";
-            String title = state.title() != null ? state.title().trim() : "";
-            String trackKey = (artist + "___" + title).toLowerCase();
-            if (!title.isEmpty() && !trackKey.equals(this.lastCountedTrackKey)) {
-                this.lastCountedTrackKey = trackKey;
-                ++this.totalTracksPlayed;
-                if (!artist.isEmpty()) {
-                    this.artistCount.merge(artist, 1, Integer::sum);
-                }
-                this.trackCount.merge(title, 1, Integer::sum);
-            }
+            this.recordActiveTrack(state.artist(), state.title());
         }
     }
 

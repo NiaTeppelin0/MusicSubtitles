@@ -32,6 +32,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileAttribute;
 import java.util.List;
+import java.util.Locale;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -187,7 +188,7 @@ implements ClientModInitializer {
                 ((FabricClientCommandSource)ctx.getSource()).sendFeedback((class_2561)class_2561.method_43470("§6[Музыка] §fТекущая анимация субтитров: §e" + current + "\n§7Доступные режимы: §abounce §7(Караоке прыжок), §bwave §7(Неоновая волна), §cmiside §7(MiSide падение), §dpop §7(Упругий поп-ап), §6pulse §7(Пульс в такт), §eslide §7(Слайд-появление), §fclassic §7(Классика)\n§7Использование: §e/musicsubtitles anim <режим> §7или §e/musicsubtitles nextanim"));
                 return 1;
             }).then(ClientCommandManager.argument("mode", (ArgumentType)StringArgumentType.word()).suggests((ctx, builder) -> class_2172.method_9265(List.of("bounce", "wave", "miside", "pop", "pulse", "slide", "classic"), (SuggestionsBuilder)builder)).executes(ctx -> {
-                String mode = StringArgumentType.getString((CommandContext)ctx, "mode").toLowerCase();
+                String mode = StringArgumentType.getString((CommandContext)ctx, "mode").toLowerCase(Locale.ROOT);
                 String mapped = switch (mode) {
                     case "wave" -> "WAVE_FLOAT";
                     case "miside", "miside_fall" -> "MISIDE_FALL";
@@ -284,14 +285,14 @@ implements ClientModInitializer {
                 .executes(ctx -> {
                     String code = StringArgumentType.getString((CommandContext)ctx, "code");
                     com.example.yandexmusichud.hud.PlayerBadgeManager.INSTANCE.joinRoom(code);
-                    ((FabricClientCommandSource)ctx.getSource()).sendFeedback((class_2561)class_2561.method_43470("§b♫ [Music Sync] §eПодключение к комнате " + code.toUpperCase() + "..."));
+                    ((FabricClientCommandSource)ctx.getSource()).sendFeedback((class_2561)class_2561.method_43470("§b♫ [Music Sync] §eПодключение к комнате " + code.toUpperCase(Locale.ROOT) + "..."));
                     return 1;
                 })
                 .then(ClientCommandManager.argument("password", (ArgumentType)StringArgumentType.word()).executes(ctx -> {
                     String code = StringArgumentType.getString((CommandContext)ctx, "code");
                     String pass = StringArgumentType.getString((CommandContext)ctx, "password");
                     com.example.yandexmusichud.hud.PlayerBadgeManager.INSTANCE.joinRoom(code, pass);
-                    ((FabricClientCommandSource)ctx.getSource()).sendFeedback((class_2561)class_2561.method_43470("§b♫ [Music Sync] §eПодключение к комнате " + code.toUpperCase() + "..."));
+                    ((FabricClientCommandSource)ctx.getSource()).sendFeedback((class_2561)class_2561.method_43470("§b♫ [Music Sync] §eПодключение к комнате " + code.toUpperCase(Locale.ROOT) + "..."));
                     return 1;
                 }))
             ));
@@ -433,11 +434,13 @@ implements ClientModInitializer {
                 this.lyricsManager.shutdown();
             }
             com.example.yandexmusichud.local.LocalMusicPlayer.getInstance().stop();
-            this.nowPlayingClient.stop();
+            com.example.yandexmusichud.hud.PlayerBadgeManager.INSTANCE.shutdown();
+            this.nowPlayingClient.shutdown();
             this.coverManager.shutdown();
-            this.helperManager.stop();
-            TwitchManager.getInstance().disconnect();
-            com.example.yandexmusichud.donationalerts.DonationAlertsManager.getInstance().disconnect();
+            com.example.yandexmusichud.texture.CustomBackgroundManager.INSTANCE.shutdown();
+            this.helperManager.shutdown();
+            TwitchManager.getInstance().shutdown();
+            com.example.yandexmusichud.donationalerts.DonationAlertsManager.getInstance().shutdown();
         });
     }
 
