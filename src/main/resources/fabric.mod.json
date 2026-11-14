@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "yandexmusichud",
-  "version": "2.8",
+  "version": "2.8.1",
   "name": "Music Subtitles",
   "description": "Displays currently playing track and synced 3D/2D music subtitles in Minecraft.",
   "authors": ["Nia_Teppelin_0"],

@@ -432,7 +432,7 @@ extends class_437 {
         lineY += 13;
         context.method_51433(tr, "§b✈ @TG_Nia_Teppelin0", textX, lineY, alphaInt << 24 | 0x24A1DE, true);
         lineY += 13;
-        context.method_51433(tr, "§7Версия: §e2.8 §7| Автор: §dНия (Nia_Teppelin_0)", textX, lineY, alphaInt << 24 | 0xAAAAAA, false);
+        context.method_51433(tr, "§7Версия: §e2.8.1 §7| Автор: §dНия (Nia_Teppelin_0)", textX, lineY, alphaInt << 24 | 0xAAAAAA, false);
 
         int listY = cardY + 94;
         context.method_51433(tr, "§a✔ §fОригинальная версия без изменений и угроз", cardX + 16, listY, alphaInt << 24 | 0xFFFFFF, false);
@@ -859,7 +859,7 @@ extends class_437 {
             return;
         }
         class_327 tr = this.field_22793;
-        String verText = "2.8";
+        String verText = "2.8.1";
         int verW = tr.method_1727(verText);
         int verH = 9;
 

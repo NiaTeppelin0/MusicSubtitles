@@ -33,3 +33,6 @@ desktop.ini
 *.tmp
 *.bak
 *.swp
+
+# Local AI knowledge graph
+graphify-out/

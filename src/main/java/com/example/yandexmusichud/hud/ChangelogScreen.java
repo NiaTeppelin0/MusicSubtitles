@@ -27,7 +27,7 @@ public class ChangelogScreen extends class_437 {
     private boolean isDraggingScrollbar = false;
 
     public ChangelogScreen(class_437 parent) {
-        super((class_2561)class_2561.method_43470("Music Subtitles 2.8 Changelog"));
+        super((class_2561)class_2561.method_43470("Music Subtitles 2.8.1 Changelog"));
         this.parent = parent;
         this.initEntries();
     }
@@ -35,56 +35,70 @@ public class ChangelogScreen extends class_437 {
     private void initEntries() {
         this.entries.clear();
         this.entries.add(new ChangeEntry(
-            "1. Совместное прослушивание (Music Sync)",
+            "1. Реальные субтитры на лету (Live-STT)",
+            "Потоковое распознавание речи из аудио с вокальным фильтром и отсевом галлюцинаций.",
+            "LIVE ЗВУК",
+            "🎙",
+            0xFF22D3EE
+        ));
+        this.entries.add(new ChangeEntry(
+            "2. Провайдеры текстов и статус Live-DSP",
+            "Исправлен поиск NetEase, убраны нерабочие зеркала Genius, добавлен статус Live-STT.",
+            "ПЕРЕВОД & API",
+            "🌐",
+            0xFF34D399
+        ));
+        this.entries.add(new ChangeEntry(
+            "3. Совместное прослушивание (Music Sync)",
             "Слушайте музыку синхронно с друзьями на любых серверах через ультрабыстрый релей.",
             "СЕТЬ & РЕЛЕЙ",
             "♫",
             0xFF00F5D4
         ));
         this.entries.add(new ChangeEntry(
-            "2. Комнаты с паролями и управление",
+            "4. Комнаты с паролями и управление",
             "Создание защищённых сессий, 5-значные коды, кик и бан нежелательных слушателей.",
             "КОМНАТЫ",
             "🔒",
             0xFF10B981
         ));
         this.entries.add(new ChangeEntry(
-            "3. Modern Glassmorphic UI",
+            "5. Modern Glassmorphic UI",
             "Стильный стеклянный неоновый дизайн окон, адаптивные текстовые поля и кнопки.",
             "ИНТЕРФЕЙС",
             "✨",
             0xFF38BDF8
         ));
         this.entries.add(new ChangeEntry(
-            "4. Вкладка детальной диагностики",
+            "6. Вкладка детальной диагностики",
             "Мониторинг рассинхрона в реальном времени, акустический micro-glide и сетевой пинг.",
             "ДИАГНОСТИКА",
             "⚡",
             0xFFF59E0B
         ));
         this.entries.add(new ChangeEntry(
-            "5. Умная пауза спринта в субтитрах",
+            "7. Умная пауза спринта в субтитрах",
             "При остановке во время бега режим субтитров мягко ждёт секунду перед переключением.",
             "СУБТИТРЫ",
             "🏃",
             0xFFA855F7
         ));
         this.entries.add(new ChangeEntry(
-            "6. Динамические плашки подсказок",
+            "8. Динамические плашки подсказок",
             "Тултипы автоматически подстраивают ширину под длину текста без обрезания строк.",
             "УДОБСТВО",
             "✦",
             0xFF06B6D4
         ));
         this.entries.add(new ChangeEntry(
-            "7. Настройка отображения в Табе",
+            "9. Настройка отображения в Табе",
             "Быстрое включение/отключение видимости мода в списке игроков прямо после интро.",
             "ТАБЛИЦА ИГРОКОВ",
             "👥",
             0xFFFFCC00
         ));
         this.entries.add(new ChangeEntry(
-            "8. Очистка кэша и оптимизация",
+            "10. Очистка кэша и оптимизация",
             "Оптимизированный рендеринг, мгновенная очистка кэша потоков и стабильный звук.",
             "ОПТИМИЗАЦИЯ",
             "🚀",
@@ -115,7 +129,7 @@ public class ChangelogScreen extends class_437 {
 
         ModernButtonWidget btnEditor = new ModernButtonWidget(panelX + 12 + btnW + btnGap, bottomY, btnW, btnH, (class_2561)class_2561.method_43470("§b♫ Редактор"), b -> {
             this.playSound(class_3417.field_14709, 1.2f, 0.7f);
-            HudConfig.INSTANCE.lastSeenChangelogVersion = "2.8";
+            HudConfig.INSTANCE.lastSeenChangelogVersion = "2.8.1";
             HudConfig.save();
             if (this.field_22787 != null) {
                 this.field_22787.method_1507((class_437)new LyricEditorScreen(this));
@@ -126,7 +140,7 @@ public class ChangelogScreen extends class_437 {
 
         ModernButtonWidget btnConfig = new ModernButtonWidget(panelX + 12 + (btnW + btnGap) * 2, bottomY, btnW, btnH, (class_2561)class_2561.method_43470("§e⚙ Настройки"), b -> {
             this.playSound(class_3417.field_14709, 1.2f, 0.7f);
-            HudConfig.INSTANCE.lastSeenChangelogVersion = "2.8";
+            HudConfig.INSTANCE.lastSeenChangelogVersion = "2.8.1";
             HudConfig.save();
             if (this.field_22787 != null) {
                 this.field_22787.method_1507((class_437)new HudEditScreen(this));
@@ -152,7 +166,7 @@ public class ChangelogScreen extends class_437 {
 
     private void closeScreen() {
         this.playSound(class_3417.field_14709, 1.0f, 0.7f);
-        HudConfig.INSTANCE.lastSeenChangelogVersion = "2.8";
+        HudConfig.INSTANCE.lastSeenChangelogVersion = "2.8.1";
         HudConfig.save();
         if (this.field_22787 != null) {
             if (HudConfig.INSTANCE.promptYandexMusicOnStartup) {
@@ -232,17 +246,19 @@ public class ChangelogScreen extends class_437 {
         MusicHudRenderer.renderRoundedRect(context, panelX, panelY, panelW, panelH, 10, 0xF40B0E18);
         MusicHudRenderer.renderRoundedBorder(context, panelX, panelY, panelW, panelH, 10, 0x8800E5FF, 0x33446688);
 
-        int badgeW = 44;
+        String badgeLabel = "v2.8.1";
+        int badgeTextW = tr.method_1727(badgeLabel);
+        int badgeW = Math.max(48, badgeTextW + 14);
         int badgeH = 14;
         int badgeX = panelX + 12;
         int badgeY = panelY + 11;
         MusicHudRenderer.renderRoundedRect(context, badgeX, badgeY, badgeW, badgeH, 4, 0xDDFFB300);
-        context.method_51433(tr, "v2.8", badgeX + 10, badgeY + 3, 0xFF111111, false);
+        context.method_51433(tr, badgeLabel, badgeX + (badgeW - badgeTextW) / 2, badgeY + 3, 0xFF111111, false);
 
-        String mainTitle = "§6✦ Что нового в обновлении §e2.8 §6✦";
+        String mainTitle = "§6✦ Что нового в обновлении §e2.8.1 §6✦";
         context.method_51433(tr, mainTitle, badgeX + badgeW + 8, panelY + 10, -1, true);
 
-        String subTitle = tr.method_27523("§7Совместное прослушивание, комнаты с паролем, стеклянный дизайн и оптимизация", Math.max(80, panelW - (badgeW + 28)));
+        String subTitle = tr.method_27523("§7Живой Live-STT из аудио, исправления NetEase/Genius и стеклянный UI", Math.max(80, panelW - (badgeW + 28)));
         context.method_51433(tr, subTitle, badgeX + badgeW + 8, panelY + 23, 0x99AABB, false);
 
         int listX = panelX + 12;

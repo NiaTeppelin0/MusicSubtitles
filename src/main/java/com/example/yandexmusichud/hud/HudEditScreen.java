@@ -1775,7 +1775,7 @@ extends class_437 {
         }
         int brandX = 4;
         int brandY = 4;
-        int brandW = 158;
+        int brandW = 168;
         int brandH = 34;
         boolean hovered = mouseX >= brandX && mouseX <= brandX + brandW && mouseY >= brandY && mouseY <= brandY + brandH;
 
@@ -1803,9 +1803,9 @@ extends class_437 {
         int textX = brandX + 35;
         context.method_51433(this.field_22793, "§bMusic §fSubtitles", textX, brandY + 6, -1, true);
         if (hovered) {
-            context.method_51433(this.field_22793, "§8Версия: §e2.8 §d[Автор ↗]", textX, brandY + 19, -1, false);
+            context.method_51433(this.field_22793, "§8Версия: §e2.8.1 §d[Автор ↗]", textX, brandY + 19, -1, false);
         } else {
-            context.method_51433(this.field_22793, "§8Версия: §e2.8", textX, brandY + 19, -1, false);
+            context.method_51433(this.field_22793, "§8Версия: §e2.8.1", textX, brandY + 19, -1, false);
         }
     }
 

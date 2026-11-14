@@ -807,7 +807,7 @@ extends class_437 {
     public String buildDiagnosticReport() {
         StringBuilder sb = new StringBuilder();
         sb.append("================================================================================\n");
-        sb.append("         MUSIC SUBTITLES v2.8 \u2014 \u0414\u0415\u0422\u0410\u041b\u042c\u041d\u042b\u0419 \u0414\u0418\u0410\u0413\u041d\u041e\u0421\u0422\u0418\u0427\u0415\u0421\u041a\u0418\u0419 \u041e\u0422\u0427\u0401\u0422\n");
+        sb.append("        MUSIC SUBTITLES v2.8.1 \u2014 \u0414\u0415\u0422\u0410\u041b\u042c\u041d\u042b\u0419 \u0414\u0418\u0410\u0413\u041d\u041e\u0421\u0422\u0418\u0427\u0415\u0421\u041a\u0418\u0419 \u041e\u0422\u0427\u0401\u0422\n");
         sb.append("================================================================================\n");
         sb.append("\u0414\u0430\u0442\u0430 \u0438 \u0432\u0440\u0435\u043c\u044f: ").append(java.time.LocalDateTime.now().toString()).append("\n");
         sb.append("\u0422\u0438\u043f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438: ").append(this.isDetailedScan ? "\u0413\u043b\u0443\u0431\u043e\u043a\u0430\u044f \u0434\u0435\u0442\u0430\u043b\u044c\u043d\u0430\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 (Deep Scan)" : "\u0411\u044b\u0441\u0442\u0440\u0430\u044f \u044d\u043a\u0441\u043f\u0440\u0435\u0441\u0441-\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430").append("\n\n");

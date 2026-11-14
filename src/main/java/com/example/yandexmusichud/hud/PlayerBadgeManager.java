@@ -561,7 +561,7 @@ public class PlayerBadgeManager {
         msg.addProperty("uuid", mc.field_1724.method_5667().toString());
         msg.addProperty("name", mc.field_1724.method_5477().getString());
         msg.addProperty("server", sIp);
-        msg.addProperty("version", "2.8");
+        msg.addProperty("version", "2.8.1");
         try {
             ws.sendText(msg.toString(), true);
             this.handshakeSentForConnection = true;

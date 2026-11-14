@@ -6,7 +6,7 @@
 
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.21.11%20%7C%201.21.x-52b788?style=for-the-badge&logo=minecraft&logoColor=white)](https://fabricmc.net/)
 [![Fabric](https://img.shields.io/badge/Fabric-Loader%200.16.9+-e9c46a?style=for-the-badge&logo=fabric&logoColor=black)](https://fabricmc.net/)
-[![Version](https://img.shields.io/badge/Version-v2.8-00F5D4?style=for-the-badge)](https://github.com/)
+[![Version](https://img.shields.io/badge/Version-v2.8.1-00F5D4?style=for-the-badge)](../../releases/tag/v2.8.1)
 [![Java](https://img.shields.io/badge/Java-21+-orange?style=for-the-badge&logo=openjdk&logoColor=white)](https://openjdk.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-@TG__Nia__Teppelin0-24A1DE?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/TG_Nia_Teppelin0)
@@ -46,7 +46,7 @@
 
 ### 🔌 Источники музыки и интеграции
 * **Плееры и стриминги:** Яндекс Музыка (нативный OAuth API), Spotify, YouTube Music, VK Музыка, SoundCloud, Deezer, локальные аудиофайлы (MP3, WAV, FLAC).
-* **Поиск текстов:** Автоматический поиск таймингов через LRCLIB, Яндекс Музыку, Genius, NetEase.
+* **Поиск текстов и Live-STT:** Автоматический поиск таймингов через LRCLIB, Яндекс Музыку, Kugou, QQ Music, NetEase и Genius; если текст не найден — потоковая генерация субтитров на лету из системного аудио (WASAPI loopback + вокальный bandpass 180–4200 Гц + Speech-to-Text + караоке-тайминги).
 * **Стриминг-алерты:** Twitch (фолловеры, подписки, донаты) и DonationAlerts.
 * **Smart Ducking:** Умное приглушение звуков мобов и окружения во время музыки.
 
@@ -57,7 +57,7 @@
 1. Установите **Minecraft 1.21.11** (или совместимую версию 1.21.x).
 2. Установите **Fabric Loader** версии `0.16.9` или выше.
 3. Поместите **Fabric API** в папку `.minecraft/mods/`.
-4. Скачайте файл **`MusicSubtitles-2.8.jar`** и переместите в `.minecraft/mods/`.
+4. Скачайте файл **`MusicSubtitles-2.8.1.jar`** из раздела Releases и переместите в `.minecraft/mods/`.
 5. Запустите Minecraft. Мод готов к работе!
 
 ---
