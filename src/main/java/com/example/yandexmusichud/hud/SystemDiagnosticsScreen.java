@@ -635,18 +635,13 @@ extends class_437 {
                 }
                 long lrclibPing = SystemDiagnosticsScreen.pingUrlTimed("https://lrclib.net/api/search?q=coldplay", 4000);
                 long yandexPing = SystemDiagnosticsScreen.pingUrlTimed("https://api.music.yandex.net/search?text=test&type=track&page=0", 3500);
-                long geniusPing = SystemDiagnosticsScreen.pingUrlTimed("https://dumb.bloat.cat", 3500);
-                if (geniusPing < 0L) {
-                    geniusPing = SystemDiagnosticsScreen.pingUrlTimed("https://genius.fsky.io", 3500);
-                }
-                if (geniusPing < 0L) {
-                    geniusPing = SystemDiagnosticsScreen.pingUrlTimed("https://api.genius.com/search?q=test", 3500);
-                }
+                long geniusPing = SystemDiagnosticsScreen.pingUrlTimed("https://api.genius.com/search?q=test", 3500);
                 long neteasePing = SystemDiagnosticsScreen.pingUrlTimed("https://music.163.com", 3500);
                 long kugouPing = SystemDiagnosticsScreen.pingUrlTimed("http://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=test&duration=180000", 3500);
                 long qqPing = SystemDiagnosticsScreen.pingUrlTimed("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=test&format=json", 3500);
                 boolean liveDspActive = lm != null && state != null && (lm.isTrackOnTheFly(state) || lm.isLiveAudioGenerating());
-                String liveDspLabel = liveDspActive ? "Активен (генерация на лету)" : "Готов (резерв в реальном времени)";
+                String liveStatusDetail = lm != null ? lm.getLiveAudioStatusLabel() : "нет менеджера";
+                String liveDspLabel = liveDspActive ? "Активен (" + liveStatusDetail + ")" : "Готов (" + liveStatusDetail + ")";
                 StringBuilder lyricsLog = new StringBuilder();
                 lyricsLog.append("LRCLIB API: ").append(lrclibPing >= 0L ? lrclibPing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");
                 lyricsLog.append("Yandex Music API: ").append(yandexPing >= 0L ? yandexPing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");

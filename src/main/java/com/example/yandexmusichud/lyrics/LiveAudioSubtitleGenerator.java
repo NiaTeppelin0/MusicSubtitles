@@ -1,51 +1,113 @@
 package com.example.yandexmusichud.lyrics;
 
 import com.example.yandexmusichud.network.TrackState;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.io.ByteArrayOutputStream;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class LiveAudioSubtitleGenerator {
-    private static final String[][] FAST_VOCAL_PHRASES = new String[][]{
-        {"\u266a", "\u0433\u043e\u043b\u043e\u0441", "\u0432", "\u0440\u0438\u0442\u043c\u0435", "\u266a", "\u0442\u0430\u043a\u0442", "\u266b"},
-        {"\u266b", "\u0432\u043e\u043a\u0430\u043b", "\u2022", "\u043f\u043e\u0442\u043e\u043a", "\u0441\u043b\u043e\u0432", "\u266a", "\u266b"},
-        {"\u266a", "\u0447\u0438\u0442\u043a\u0430", "\u0432", "\u0431\u0438\u0442", "\u2022", "\u0440\u0438\u0442\u043c", "\u266b"}
-    };
-    private static final String[][] MELODIC_VOCAL_PHRASES = new String[][]{
-        {"\u266a", "\u0436\u0438\u0432\u043e\u0439", "\u0432\u043e\u043a\u0430\u043b", "\u266b"},
-        {"\u266b", "\u0432\u043e\u043a\u0430\u043b\u044c\u043d\u0430\u044f", "\u043b\u0438\u043d\u0438\u044f", "\u266a"},
-        {"\u266a", "\u0433\u043e\u043b\u043e\u0441", "\u0438", "\u043c\u0435\u043b\u043e\u0434\u0438\u044f", "\u266b"}
-    };
-    private static final String[][] BASS_DROP_PHRASES = new String[][]{
-        {"\u266b", "\u0431\u0430\u0441", "\u2022", "\u0443\u0434\u0430\u0440", "\u266a", "\u0440\u0438\u0442\u043c", "\u266b"},
-        {"\u266a", "\u043f\u043b\u043e\u0442\u043d\u044b\u0439", "\u0431\u0438\u0442", "\u266b"},
-        {"\u266b", "\u0434\u0440\u043e\u043f", "\u0431\u0438\u0442\u0430", "\u266a"}
-    };
-    private static final String[][] GROOVE_PHRASES = new String[][]{
-        {"\u266a", "\u0436\u0438\u0432\u043e\u0439", "\u0440\u0438\u0442\u043c", "\u266b"},
-        {"\u266b", "\u043c\u0435\u043b\u043e\u0434\u0438\u044f", "\u0432", "\u0442\u0430\u043a\u0442", "\u266a"},
-        {"\u266a", "\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0430\u043b", "\u2022", "\u0437\u0432\u0443\u043a", "\u266b"}
-    };
+    private static final String GOOGLE_SPEECH_BASE = "https://www.google.com/speech-api/v2/recognize?output=json&client=chromium&pFilter=0";
+    private static final String HF_WHISPER_BASE = "https://hf-audio-whisper-large-v3.hf.space";
+    private static final int CAPTURE_DURATION_MS = 3800;
+    private static final long INTER_CAPTURE_GAP_MS = 120L;
+    private static final Pattern MULTI_SPACE = Pattern.compile("\\s+");
+    private static final Pattern EDGE_PUNCT = Pattern.compile("^[\\p{Punct}\\s]+|[\\p{Punct}\\s]+$");
+    private static final Set<String> HALLUCINATION_PHRASES = Set.of(
+        "thanks for watching",
+        "thank you for watching",
+        "subscribe",
+        "like and subscribe",
+        "subtitles by",
+        "captions by",
+        "translated by",
+        "amara org",
+        "you",
+        "thank you",
+        "bye",
+        "music",
+        "субтитры",
+        "субтитры создавал",
+        "редактор субтитров",
+        "продолжение следует",
+        "подписывайтесь",
+        "спасибо за просмотр",
+        "ставьте лайк",
+        "музыка",
+        "dimatorzok"
+    );
+
+    private record RecognitionResult(String text, double confidence, String lang) {
+    }
 
     private final LyricsManager lyricsManager;
+    private final HttpClient httpClient;
+    private final ExecutorService sttExecutor;
+    private final AtomicInteger sttInFlight = new AtomicInteger(0);
     private volatile boolean captureInFlight = false;
     private volatile long lastCaptureTimestampMs = 0L;
+    private volatile long lastCaptureEndedMs = 0L;
     private volatile String activeTrackKey = "";
-    private volatile int phraseCounter = 0;
+    private volatile String stickyLang = "";
+    private volatile String lastEmittedNorm = "";
+    private volatile long lastEmittedAtMs = 0L;
+    private volatile long whisperCooldownUntilMs = 0L;
+    private volatile String statusLabel = "Ожидание трека";
 
     public LiveAudioSubtitleGenerator(LyricsManager lyricsManager) {
         this.lyricsManager = lyricsManager;
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(4)).build();
+        this.sttExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "MusicSubtitles-LiveSTT");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     public void resetForTrack(String trackKey) {
         this.activeTrackKey = trackKey != null ? trackKey : "";
-        this.phraseCounter = 0;
+        this.stickyLang = "";
+        this.lastEmittedNorm = "";
+        this.lastEmittedAtMs = 0L;
         this.lastCaptureTimestampMs = 0L;
+        this.lastCaptureEndedMs = 0L;
+        this.captureInFlight = false;
+        this.statusLabel = this.activeTrackKey.isEmpty() ? "Ожидание трека" : "Инициализация захвата";
     }
 
     public boolean isCapturingOrActive() {
-        return this.captureInFlight || (this.lastCaptureTimestampMs > 0L && System.currentTimeMillis() - this.lastCaptureTimestampMs < 6000L);
+        long now = System.currentTimeMillis();
+        return this.captureInFlight || this.sttInFlight.get() > 0 || (this.lastCaptureTimestampMs > 0L && now - this.lastCaptureTimestampMs < 6500L);
+    }
+
+    public String getStatusLabel() {
+        return this.statusLabel;
+    }
+
+    public void shutdown() {
+        this.sttExecutor.shutdownNow();
     }
 
     public void tickIfNeeded(TrackState state, String trackKey) {
@@ -55,223 +117,609 @@ public class LiveAudioSubtitleGenerator {
         if (!trackKey.equals(this.activeTrackKey)) {
             this.resetForTrack(trackKey);
         }
+        if (this.sttInFlight.get() >= 2) {
+            return;
+        }
         long now = System.currentTimeMillis();
-        if (now - this.lastCaptureTimestampMs < 2700L) {
+        if (this.lastCaptureEndedMs > 0L && now - this.lastCaptureEndedMs < INTER_CAPTURE_GAP_MS) {
+            return;
+        }
+        if (this.lastCaptureTimestampMs > 0L && now - this.lastCaptureTimestampMs < 600L) {
             return;
         }
         this.captureInFlight = true;
         this.lastCaptureTimestampMs = now;
-        try {
-            CompletableFuture.runAsync(() -> this.captureAndGenerate(state, trackKey), this.lyricsManager.getExecutor());
-        } catch (Exception e) {
-            this.captureInFlight = false;
-        }
+        this.lyricsManager.getExecutor().execute(() -> this.captureLoop(state, trackKey));
     }
 
-    private void captureAndGenerate(TrackState state, String trackKey) {
+    private void captureLoop(TrackState state, String trackKey) {
         try {
-            if (trackKey == null || !trackKey.equals(this.lyricsManager.getCurrentTrackKey()) || !state.isPlaying()) {
-                return;
-            }
             int port = this.lyricsManager.resolveHelperPort();
             if (port <= 0) {
+                this.statusLabel = "Helper не запущен";
+                this.lastCaptureEndedMs = System.currentTimeMillis() + 1800L;
                 return;
             }
             String helperBase = "http://127.0.0.1:" + port;
-            int captureDurMs = 2400;
-            String startResp = LyricsManager.httpPost(helperBase + "/capture/start", "{\"durationMs\":" + captureDurMs + "}", 2000);
+            String startResp = LyricsManager.httpPost(helperBase + "/capture/start", "{\"durationMs\":" + CAPTURE_DURATION_MS + "}", 2000);
             if (startResp == null) {
+                this.statusLabel = "Захват занят / недоступен";
+                this.lastCaptureEndedMs = System.currentTimeMillis() + 900L;
                 return;
             }
+            this.statusLabel = "Слушаю аудио...";
             long captureStartPos = state.getInterpolatedPositionMs();
-            for (int elapsed = 0; elapsed < captureDurMs + 250; elapsed += 150) {
-                if (!trackKey.equals(this.lyricsManager.getCurrentTrackKey()) || !state.isPlaying()) {
+            for (int elapsed = 0; elapsed < CAPTURE_DURATION_MS + 220; elapsed += 120) {
+                if (!trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
                     LyricsManager.httpPost(helperBase + "/capture/stop", "", 1000);
+                    this.statusLabel = "Пауза / смена трека";
                     return;
                 }
-                Thread.sleep(150L);
+                Thread.sleep(120L);
             }
-            if (!trackKey.equals(this.lyricsManager.getCurrentTrackKey()) || !state.isPlaying()) {
+            if (!trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
                 return;
             }
             byte[] wav = LyricsManager.httpGetBytes(helperBase + "/capture/result", 3000);
+            this.lastCaptureEndedMs = System.currentTimeMillis();
             if (wav == null || wav.length <= 44) {
+                this.statusLabel = "Пустой буфер аудио";
                 return;
             }
-            AcousticLagEstimator.Pcm pcm = AcousticLagEstimator.decodeWav(wav);
-            if (pcm == null || pcm.samples() == null || pcm.sampleRate() <= 0) {
-                return;
-            }
-            LyricLine synthesized = this.synthesizeLineFromPcm(pcm.samples(), pcm.sampleRate(), captureStartPos, captureDurMs);
-            if (synthesized != null) {
-                this.lyricsManager.appendGeneratedLiveLine(trackKey, synthesized);
-            }
+            this.captureInFlight = false;
+            this.sttInFlight.incrementAndGet();
+            this.sttExecutor.execute(() -> {
+                try {
+                    this.processCapturedWav(wav, trackKey, state, captureStartPos, CAPTURE_DURATION_MS);
+                } finally {
+                    this.sttInFlight.decrementAndGet();
+                }
+            });
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         } catch (Exception ignored) {
+            this.statusLabel = "Ошибка захвата";
         } finally {
             this.captureInFlight = false;
-            this.lastCaptureTimestampMs = System.currentTimeMillis();
         }
     }
 
-    public LyricLine synthesizeLineFromPcm(float[] samples, int sampleRate, long startPosMs, long windowMs) {
-        if (samples == null || sampleRate <= 0 || samples.length < Math.max(800, sampleRate / 4)) {
+    private void processCapturedWav(byte[] wav, String trackKey, TrackState state, long captureStartPos, long captureDurMs) {
+        if (!trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
+            return;
+        }
+        AcousticLagEstimator.Pcm pcm = AcousticLagEstimator.decodeWav(wav);
+        if (pcm == null || pcm.samples() == null || pcm.sampleRate() <= 0) {
+            return;
+        }
+        float[] rawSamples = pcm.samples();
+        int sampleRate = pcm.sampleRate();
+        if (rawSamples.length < sampleRate) {
+            return;
+        }
+        double rawRms = LiveAudioSubtitleGenerator.computeRms(rawSamples);
+        if (rawRms < 0.0007) {
+            this.statusLabel = "Тишина / пауза";
+            return;
+        }
+        float[] speechBand = AcousticLagEstimator.extractSpeechBand(rawSamples, sampleRate);
+        double bandRms = LiveAudioSubtitleGenerator.computeRms(speechBand);
+        double bandPeak = LiveAudioSubtitleGenerator.computePeak(speechBand);
+        if (bandRms < 0.00045 || bandPeak < 0.0018) {
+            this.statusLabel = "Инструментал / низкий сигнал";
+            return;
+        }
+        double[][] features = AcousticLagEstimator.audioFeatures(rawSamples, sampleRate);
+        double[] smoothActivity = features.length > 0 ? features[0] : new double[0];
+        double activeFraction = LiveAudioSubtitleGenerator.computeActiveFraction(smoothActivity, 0.14);
+
+        byte[] speechPcm16 = LiveAudioSubtitleGenerator.encodePreEmphPcm16(speechBand);
+        List<String> langs = this.resolveLanguageOrder(state);
+        String primaryLang = langs.get(0);
+        String secondaryLang = langs.size() > 1 ? langs.get(1) : "";
+
+        this.statusLabel = "Распознавание речи (" + primaryLang + ")...";
+        RecognitionResult best = this.recognizeBest(speechPcm16, rawSamples, sampleRate, primaryLang, secondaryLang, rawRms, activeFraction);
+        if (best == null || best.text() == null || best.text().isEmpty()) {
+            this.statusLabel = activeFraction > 0.2 ? "Речь не разобрана (инструментал/шум)" : "Инструментальная секция";
+            return;
+        }
+        if (!trackKey.equals(this.activeTrackKey)) {
+            return;
+        }
+        if (best.confidence() >= 0.75 && best.lang() != null && !best.lang().isEmpty()) {
+            this.stickyLang = best.lang();
+        }
+        String normKey = LiveAudioSubtitleGenerator.normalizeForDedupe(best.text());
+        long now = System.currentTimeMillis();
+        if (normKey.isEmpty() || (normKey.equals(this.lastEmittedNorm) && now - this.lastEmittedAtMs < 6500L)) {
+            return;
+        }
+        this.lastEmittedNorm = normKey;
+        this.lastEmittedAtMs = now;
+        this.statusLabel = "STT OK [" + best.lang() + "]";
+
+        LyricLine synthesized = this.buildTimedLine(best.text(), smoothActivity, captureStartPos, captureDurMs);
+        if (synthesized != null) {
+            this.lyricsManager.appendGeneratedLiveLine(trackKey, synthesized);
+        }
+    }
+
+    private RecognitionResult recognizeBest(byte[] speechPcm16, float[] rawSamples, int sampleRate, String primaryLang, String secondaryLang, double rawRms, double activeFraction) {
+        RecognitionResult primaryRes = this.queryGoogleSpeechValidated(speechPcm16, sampleRate, primaryLang);
+        if (primaryRes != null && primaryRes.confidence() >= 0.72) {
+            return primaryRes;
+        }
+        RecognitionResult best = primaryRes;
+        boolean skipSecondary = !this.stickyLang.isEmpty() && this.stickyLang.equals(primaryLang) && primaryRes != null;
+        if (!skipSecondary && !secondaryLang.isEmpty() && !secondaryLang.equals(primaryLang)) {
+            RecognitionResult secRes = this.queryGoogleSpeechValidated(speechPcm16, sampleRate, secondaryLang);
+            if (LiveAudioSubtitleGenerator.scoreCandidate(secRes) > LiveAudioSubtitleGenerator.scoreCandidate(best)) {
+                best = secRes;
+            }
+        }
+        if (best != null) {
+            return best;
+        }
+        if (rawRms > 0.0025 && activeFraction >= 0.12) {
+            byte[] fullBandPcm16 = LiveAudioSubtitleGenerator.encodeNormalizedPcm16(rawSamples);
+            RecognitionResult rawRes = this.queryGoogleSpeechValidated(fullBandPcm16, sampleRate, primaryLang);
+            if (rawRes != null) {
+                return rawRes;
+            }
+        }
+        long now = System.currentTimeMillis();
+        if (activeFraction >= 0.25 && rawRms > 0.003 && now >= this.whisperCooldownUntilMs) {
+            RecognitionResult whisperRes = this.queryHfWhisper(speechPcm16, sampleRate);
+            if (whisperRes != null) {
+                return whisperRes;
+            }
+        }
+        return null;
+    }
+
+    private RecognitionResult queryGoogleSpeechValidated(byte[] pcm16, int sampleRate, String lang) {
+        RecognitionResult raw = this.callGoogleSpeechV2(pcm16, sampleRate, lang);
+        if (raw == null) {
             return null;
         }
-        double sumSqAll = 0.0;
+        String cleaned = LiveAudioSubtitleGenerator.sanitizeTranscript(raw.text(), raw.confidence());
+        if (cleaned == null) {
+            return null;
+        }
+        return new RecognitionResult(cleaned, raw.confidence(), lang);
+    }
+
+    private RecognitionResult callGoogleSpeechV2(byte[] pcm16, int sampleRate, String lang) {
+        try {
+            String url = GOOGLE_SPEECH_BASE + "&lang=" + URLEncoder.encode(lang, StandardCharsets.UTF_8);
+            HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(7))
+                .header("Content-Type", "audio/l16; rate=" + sampleRate)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(pcm16))
+                .build();
+            HttpResponse<String> resp = this.httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (resp.statusCode() != 200 || resp.body() == null || resp.body().isBlank()) {
+                return null;
+            }
+            return LiveAudioSubtitleGenerator.parseGoogleSpeechNdjson(resp.body(), lang);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static RecognitionResult parseGoogleSpeechNdjson(String body, String lang) {
+        String bestText = null;
+        double bestScore = -1.0;
+        String[] lines = body.split("\\r?\\n");
+        for (String line : lines) {
+            String trimmed = line != null ? line.trim() : "";
+            if (!trimmed.startsWith("{")) {
+                continue;
+            }
+            try {
+                JsonElement el = JsonParser.parseString(trimmed);
+                if (!el.isJsonObject()) {
+                    continue;
+                }
+                JsonObject obj = el.getAsJsonObject();
+                if (!obj.has("result") || !obj.get("result").isJsonArray()) {
+                    continue;
+                }
+                JsonArray results = obj.getAsJsonArray("result");
+                for (JsonElement resEl : results) {
+                    if (!resEl.isJsonObject()) {
+                        continue;
+                    }
+                    JsonObject resObj = resEl.getAsJsonObject();
+                    if (!resObj.has("alternative") || !resObj.get("alternative").isJsonArray()) {
+                        continue;
+                    }
+                    JsonArray alts = resObj.getAsJsonArray("alternative");
+                    for (JsonElement altEl : alts) {
+                        if (!altEl.isJsonObject()) {
+                            continue;
+                        }
+                        JsonObject altObj = altEl.getAsJsonObject();
+                        if (!altObj.has("transcript") || !altObj.get("transcript").isJsonPrimitive()) {
+                            continue;
+                        }
+                        String transcript = altObj.get("transcript").getAsString().trim();
+                        if (transcript.isEmpty()) {
+                            continue;
+                        }
+                        double conf = altObj.has("confidence") && altObj.get("confidence").isJsonPrimitive()
+                            ? altObj.get("confidence").getAsDouble()
+                            : 0.65;
+                        if (conf > bestScore) {
+                            bestScore = conf;
+                            bestText = transcript;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return bestText != null ? new RecognitionResult(bestText, bestScore, lang) : null;
+    }
+
+    private RecognitionResult queryHfWhisper(byte[] pcm16, int sampleRate) {
+        try {
+            byte[] wavBytes = LiveAudioSubtitleGenerator.wrapCanonicalWav(pcm16, sampleRate);
+            String boundary = "----MusicSubtitlesBoundary" + System.nanoTime();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            String header = "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"files\"; filename=\"clip.wav\"\r\n"
+                + "Content-Type: audio/wav\r\n\r\n";
+            baos.write(header.getBytes(StandardCharsets.UTF_8));
+            baos.write(wavBytes);
+            baos.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+
+            HttpRequest upReq = HttpRequest.newBuilder()
+                .uri(URI.create(HF_WHISPER_BASE + "/gradio_api/upload"))
+                .timeout(Duration.ofSeconds(8))
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(baos.toByteArray()))
+                .build();
+            HttpResponse<String> upResp = this.httpClient.send(upReq, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (upResp.statusCode() != 200 || upResp.body() == null) {
+                this.whisperCooldownUntilMs = System.currentTimeMillis() + 600000L;
+                return null;
+            }
+            JsonArray arr = JsonParser.parseString(upResp.body()).getAsJsonArray();
+            if (arr.isEmpty()) {
+                this.whisperCooldownUntilMs = System.currentTimeMillis() + 600000L;
+                return null;
+            }
+            String serverPath = arr.get(0).getAsString();
+            JsonObject fileData = new JsonObject();
+            fileData.addProperty("path", serverPath);
+            JsonObject meta = new JsonObject();
+            meta.addProperty("_type", "gradio.FileData");
+            fileData.add("meta", meta);
+            JsonArray dataArr = new JsonArray();
+            dataArr.add(fileData);
+            dataArr.add("transcribe");
+            JsonObject callBody = new JsonObject();
+            callBody.add("data", dataArr);
+
+            HttpRequest callReq = HttpRequest.newBuilder()
+                .uri(URI.create(HF_WHISPER_BASE + "/gradio_api/call/transcribe"))
+                .timeout(Duration.ofSeconds(8))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(callBody.toString(), StandardCharsets.UTF_8))
+                .build();
+            HttpResponse<String> callResp = this.httpClient.send(callReq, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (callResp.statusCode() != 200 || callResp.body() == null) {
+                this.whisperCooldownUntilMs = System.currentTimeMillis() + 600000L;
+                return null;
+            }
+            JsonObject evObj = JsonParser.parseString(callResp.body()).getAsJsonObject();
+            String eventId = evObj.has("event_id") ? evObj.get("event_id").getAsString() : "";
+            if (eventId.isEmpty()) {
+                this.whisperCooldownUntilMs = System.currentTimeMillis() + 600000L;
+                return null;
+            }
+
+            HttpRequest sseReq = HttpRequest.newBuilder()
+                .uri(URI.create(HF_WHISPER_BASE + "/gradio_api/call/transcribe/" + eventId))
+                .timeout(Duration.ofSeconds(14))
+                .GET()
+                .build();
+            HttpResponse<String> sseResp = this.httpClient.send(sseReq, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (sseResp.statusCode() != 200 || sseResp.body() == null || sseResp.body().contains("event: error")) {
+                this.whisperCooldownUntilMs = System.currentTimeMillis() + 600000L;
+                return null;
+            }
+            String text = LiveAudioSubtitleGenerator.parseGradioCompleteSse(sseResp.body());
+            String cleaned = LiveAudioSubtitleGenerator.sanitizeTranscript(text, 0.78);
+            return cleaned != null ? new RecognitionResult(cleaned, 0.78, "auto") : null;
+        } catch (Exception e) {
+            this.whisperCooldownUntilMs = System.currentTimeMillis() + 600000L;
+            return null;
+        }
+    }
+
+    private static String parseGradioCompleteSse(String sseBody) {
+        boolean sawComplete = false;
+        for (String line : sseBody.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.equals("event: complete")) {
+                sawComplete = true;
+            } else if (sawComplete && trimmed.startsWith("data:")) {
+                String jsonPart = trimmed.substring(5).trim();
+                try {
+                    JsonElement el = JsonParser.parseString(jsonPart);
+                    if (el.isJsonArray() && !el.getAsJsonArray().isEmpty()) {
+                        return el.getAsJsonArray().get(0).getAsString();
+                    }
+                } catch (Exception ignored) {
+                }
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private List<String> resolveLanguageOrder(TrackState state) {
+        List<String> order = new ArrayList<String>(3);
+        if (this.stickyLang != null && !this.stickyLang.isEmpty()) {
+            order.add(this.stickyLang);
+        }
+        String meta = ((state.title() != null ? state.title() : "") + " " + (state.artist() != null ? state.artist() : "") + " " + (state.album() != null ? state.album() : "")).trim();
+        boolean hasUkrainian = false;
+        boolean hasCyrillic = false;
+        boolean hasJapanese = false;
+        boolean hasKorean = false;
+        boolean hasCjk = false;
+        for (int i = 0; i < meta.length(); ++i) {
+            char c = meta.charAt(i);
+            if ("іїєґІЇЄҐ".indexOf(c) >= 0) {
+                hasUkrainian = true;
+                hasCyrillic = true;
+            } else if (c >= '\u0400' && c <= '\u04FF') {
+                hasCyrillic = true;
+            } else if ((c >= '\u3040' && c <= '\u30FF') || (c >= '\u31F0' && c <= '\u31FF')) {
+                hasJapanese = true;
+            } else if (c >= '\uAC00' && c <= '\uD7AF') {
+                hasKorean = true;
+            } else if (c >= '\u4E00' && c <= '\u9FFF') {
+                hasCjk = true;
+            }
+        }
+        if (hasUkrainian) {
+            LiveAudioSubtitleGenerator.addUnique(order, "uk-UA");
+            LiveAudioSubtitleGenerator.addUnique(order, "ru-RU");
+            LiveAudioSubtitleGenerator.addUnique(order, "en-US");
+        } else if (hasCyrillic) {
+            LiveAudioSubtitleGenerator.addUnique(order, "ru-RU");
+            LiveAudioSubtitleGenerator.addUnique(order, "en-US");
+        } else if (hasJapanese) {
+            LiveAudioSubtitleGenerator.addUnique(order, "ja-JP");
+            LiveAudioSubtitleGenerator.addUnique(order, "en-US");
+        } else if (hasKorean) {
+            LiveAudioSubtitleGenerator.addUnique(order, "ko-KR");
+            LiveAudioSubtitleGenerator.addUnique(order, "en-US");
+        } else if (hasCjk) {
+            LiveAudioSubtitleGenerator.addUnique(order, "zh-CN");
+            LiveAudioSubtitleGenerator.addUnique(order, "en-US");
+        } else {
+            LiveAudioSubtitleGenerator.addUnique(order, "en-US");
+            LiveAudioSubtitleGenerator.addUnique(order, "ru-RU");
+        }
+        return order;
+    }
+
+    private static void addUnique(List<String> list, String value) {
+        if (!list.contains(value)) {
+            list.add(value);
+        }
+    }
+
+    private LyricLine buildTimedLine(String text, double[] smoothActivity, long captureStartPos, long captureDurMs) {
+        String[] tokens = MULTI_SPACE.split(text.trim());
+        if (tokens.length == 0) {
+            return null;
+        }
+        long activeStartRel = 0L;
+        long activeEndRel = captureDurMs;
+        if (smoothActivity != null && smoothActivity.length > 8) {
+            int firstIdx = -1;
+            int lastIdx = -1;
+            for (int f = 0; f < smoothActivity.length; ++f) {
+                if (smoothActivity[f] > 0.14) {
+                    if (firstIdx < 0) {
+                        firstIdx = f;
+                    }
+                    lastIdx = f;
+                }
+            }
+            if (firstIdx >= 0 && lastIdx > firstIdx) {
+                long s = Math.round((double)firstIdx / (double)smoothActivity.length * (double)captureDurMs);
+                long e = Math.round((double)(lastIdx + 1) / (double)smoothActivity.length * (double)captureDurMs);
+                if (e - s >= 650L) {
+                    activeStartRel = s;
+                    activeEndRel = e;
+                }
+            }
+        }
+        long voicedSpan = Math.max(900L, Math.min(captureDurMs, activeEndRel - activeStartRel));
+        long displayDur = Math.max(2400L, Math.min(5600L, Math.max(voicedSpan + 550L, (long)tokens.length * 420L + 900L)));
+        long sweepSpan = Math.min(displayDur - 150L, Math.max(900L, voicedSpan));
+
+        int totalSyl = 0;
+        int[] syls = new int[tokens.length];
+        for (int i = 0; i < tokens.length; ++i) {
+            syls[i] = StudioCascadeAligner.countSyllables(tokens[i]);
+            totalSyl += syls[i];
+        }
+        totalSyl = Math.max(1, totalSyl);
+
+        String fullText = String.join(" ", tokens);
+        List<LyricLine.Word> wordList = new ArrayList<LyricLine.Word>(tokens.length);
+        long cursorMs = captureStartPos;
+        int charPos = 0;
+        for (int i = 0; i < tokens.length; ++i) {
+            String wText = tokens[i];
+            long wDur = Math.max(160L, Math.round((double)sweepSpan * (double)syls[i] / (double)totalSyl));
+            long wEnd = i == tokens.length - 1 ? captureStartPos + sweepSpan : Math.min(captureStartPos + sweepSpan, cursorMs + wDur);
+            if (wEnd <= cursorMs) {
+                wEnd = cursorMs + 140L;
+            }
+            int charStart = charPos;
+            int charEnd = charStart + wText.length();
+            wordList.add(new LyricLine.Word(cursorMs, wEnd, wText, charStart, charEnd));
+            cursorMs = wEnd;
+            charPos = charEnd + 1;
+        }
+        return new LyricLine(captureStartPos, captureStartPos + displayDur, fullText, wordList);
+    }
+
+    private static String sanitizeTranscript(String rawText, double confidence) {
+        if (rawText == null) {
+            return null;
+        }
+        String collapsed = MULTI_SPACE.matcher(rawText).replaceAll(" ").trim();
+        collapsed = EDGE_PUNCT.matcher(collapsed).replaceAll("").trim();
+        if (collapsed.isEmpty()) {
+            return null;
+        }
+        int letters = 0;
+        for (int i = 0; i < collapsed.length(); ++i) {
+            if (Character.isLetter(collapsed.charAt(i))) {
+                ++letters;
+            }
+        }
+        if (letters < 2) {
+            return null;
+        }
+        String lower = collapsed.toLowerCase(Locale.ROOT);
+        for (String bad : HALLUCINATION_PHRASES) {
+            if (lower.equals(bad) || (bad.length() >= 8 && lower.contains(bad))) {
+                return null;
+            }
+        }
+        String[] words = MULTI_SPACE.split(lower);
+        if (words.length == 1 && words[0].length() <= 3 && confidence < 0.80) {
+            return null;
+        }
+        if (words.length >= 6) {
+            Map<String, Integer> freq = new HashMap<String, Integer>();
+            int maxFreq = 0;
+            for (String w : words) {
+                int c = freq.getOrDefault(w, 0) + 1;
+                freq.put(w, c);
+                if (c > maxFreq) {
+                    maxFreq = c;
+                }
+            }
+            if ((double)maxFreq / (double)words.length > 0.70 && maxFreq >= 5) {
+                return null;
+            }
+        }
+        return collapsed;
+    }
+
+    private static String normalizeForDedupe(String text) {
+        if (text == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(text.length());
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (int i = 0; i < lower.length(); ++i) {
+            char c = lower.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static double scoreCandidate(RecognitionResult res) {
+        if (res == null || res.text() == null) {
+            return -1.0;
+        }
+        int words = MULTI_SPACE.split(res.text().trim()).length;
+        return res.confidence() + Math.min(0.25, (double)words * 0.03);
+    }
+
+    private static double computeRms(float[] samples) {
+        if (samples == null || samples.length == 0) {
+            return 0.0;
+        }
+        double sumSq = 0.0;
+        for (float s : samples) {
+            sumSq += (double)s * (double)s;
+        }
+        return Math.sqrt(sumSq / (double)samples.length);
+    }
+
+    private static double computePeak(float[] samples) {
+        double peak = 0.0;
+        for (float s : samples) {
+            double a = Math.abs(s);
+            if (a > peak) {
+                peak = a;
+            }
+        }
+        return peak;
+    }
+
+    private static double computeActiveFraction(double[] smoothActivity, double threshold) {
+        if (smoothActivity == null || smoothActivity.length == 0) {
+            return 0.0;
+        }
+        int active = 0;
+        for (double v : smoothActivity) {
+            if (v > threshold) {
+                ++active;
+            }
+        }
+        return (double)active / (double)smoothActivity.length;
+    }
+
+    private static byte[] encodePreEmphPcm16(float[] samples) {
+        float[] pre = new float[samples.length];
+        float prev = 0.0f;
         for (int i = 0; i < samples.length; ++i) {
-            double v = samples[i];
-            sumSqAll += v * v;
+            float cur = samples[i];
+            pre[i] = cur - 0.45f * prev;
+            prev = cur;
         }
-        double rms = Math.sqrt(sumSqAll / (double)samples.length);
-        if (rms < 0.0035) {
-            return null;
+        return LiveAudioSubtitleGenerator.encodeNormalizedPcm16(pre);
+    }
+
+    private static byte[] encodeNormalizedPcm16(float[] samples) {
+        double rms = Math.max(1.0E-5, LiveAudioSubtitleGenerator.computeRms(samples));
+        double peak = Math.max(1.0E-5, LiveAudioSubtitleGenerator.computePeak(samples));
+        double gain = Math.min(28.0, Math.min(0.21 / rms, 0.90 / peak));
+        ByteBuffer buf = ByteBuffer.allocate(samples.length * 2).order(ByteOrder.LITTLE_ENDIAN);
+        for (float s : samples) {
+            double shaped = Math.tanh((double)s * gain) * 0.88;
+            int val = (int)Math.max(-32767.0, Math.min(32767.0, Math.round(shaped * 32767.0)));
+            buf.putShort((short)val);
         }
-        long sampleDurMs = Math.round((double)samples.length * 1000.0 / (double)sampleRate);
-        long actualWindowMs = windowMs > 0L ? Math.max(800L, Math.min(4500L, sampleDurMs > 0L ? sampleDurMs : windowMs)) : Math.max(800L, sampleDurMs);
+        return buf.array();
+    }
 
-        float[] vocalSamples = StudioCascadeAligner.applyVocalBandpassFilter(samples, sampleRate);
-        int hop = Math.max(1, (int)((double)sampleRate * 0.02));
-        int totalFrames = samples.length / hop;
-        if (totalFrames < 6) {
-            return null;
-        }
-
-        double[] bassEnv = new double[totalFrames];
-        double[] vocalEnv = new double[totalFrames];
-        double[] highEnv = new double[totalFrames];
-        double lpAlpha = Math.max(0.01, Math.min(0.45, (2.0 * Math.PI * 160.0) / (double)sampleRate));
-        double lpState = 0.0;
-        double prevSample = samples[0];
-        double bassSum = 0.0;
-        double vocalSum = 0.0;
-        double highSum = 0.0;
-        double vocalFluxSum = 0.0;
-
-        for (int f = 0; f < totalFrames; ++f) {
-            int base = f * hop;
-            double bSq = 0.0;
-            double vSq = 0.0;
-            double hSq = 0.0;
-            for (int k = 0; k < hop; ++k) {
-                double x = samples[base + k];
-                lpState += lpAlpha * (x - lpState);
-                bSq += lpState * lpState;
-                double vx = vocalSamples[base + k];
-                vSq += vx * vx;
-                double hx = x - prevSample;
-                prevSample = x;
-                hSq += hx * hx;
-            }
-            double br = Math.sqrt(bSq / (double)hop);
-            double vr = Math.sqrt(vSq / (double)hop);
-            double hr = Math.sqrt(hSq / (double)hop);
-            bassEnv[f] = br;
-            vocalEnv[f] = vr;
-            highEnv[f] = hr;
-            bassSum += br;
-            vocalSum += vr;
-            highSum += hr;
-            if (f > 0) {
-                vocalFluxSum += Math.abs(vr - vocalEnv[f - 1]);
-            }
-        }
-
-        double meanBass = bassSum / (double)totalFrames;
-        double meanVocal = vocalSum / (double)totalFrames;
-        double vocalFlux = vocalFluxSum / ((double)(totalFrames - 1) * Math.max(1.0E-5, meanVocal));
-
-        double[] bSort = Arrays.copyOf(bassEnv, totalFrames);
-        double[] vSort = Arrays.copyOf(vocalEnv, totalFrames);
-        double[] hSort = Arrays.copyOf(highEnv, totalFrames);
-        Arrays.sort(bSort);
-        Arrays.sort(vSort);
-        Arrays.sort(hSort);
-        double bP95 = Math.max(1.0E-5, bSort[Math.min(totalFrames - 1, (int)((double)totalFrames * 0.95))]);
-        double vP95 = Math.max(1.0E-5, vSort[Math.min(totalFrames - 1, (int)((double)totalFrames * 0.95))]);
-        double hP95 = Math.max(1.0E-5, hSort[Math.min(totalFrames - 1, (int)((double)totalFrames * 0.95))]);
-
-        double[] actEnv = new double[totalFrames];
-        for (int f = 0; f < totalFrames; ++f) {
-            double bn = Math.min(1.5, bassEnv[f] / bP95);
-            double vn = Math.min(1.5, vocalEnv[f] / vP95);
-            double hn = Math.min(1.5, highEnv[f] / hP95);
-            actEnv[f] = 0.58 * vn + 0.25 * hn + 0.17 * bn;
-        }
-
-        double[] aSort = Arrays.copyOf(actEnv, totalFrames);
-        Arrays.sort(aSort);
-        double p25 = aSort[(int)((double)totalFrames * 0.25)];
-        double p95 = aSort[Math.min(totalFrames - 1, (int)((double)totalFrames * 0.95))];
-        double th = p25 + 0.28 * Math.max(1.0E-5, p95 - p25);
-
-        List<Integer> peakFrames = new ArrayList<Integer>();
-        int lastPeak = -14;
-        for (int f = 1; f < totalFrames - 1 && peakFrames.size() < 7; ++f) {
-            if (f - lastPeak >= 14 && actEnv[f] >= th && actEnv[f] >= actEnv[f - 1] && actEnv[f] >= actEnv[f + 1]) {
-                peakFrames.add(f);
-                lastPeak = f;
-            }
-        }
-
-        List<long[]> wordSpans = new ArrayList<long[]>();
-        if (peakFrames.size() >= 2) {
-            for (int idx = 0; idx < peakFrames.size(); ++idx) {
-                long wStart = idx == 0 ? 0L : Math.round((double)peakFrames.get(idx) * 20.0);
-                long wEnd = idx + 1 < peakFrames.size()
-                    ? Math.round((double)peakFrames.get(idx + 1) * 20.0)
-                    : actualWindowMs;
-                wStart = Math.max(0L, Math.min(actualWindowMs - 150L, wStart));
-                wEnd = Math.max(wStart + 150L, Math.min(actualWindowMs, wEnd));
-                wordSpans.add(new long[]{wStart, wEnd});
-            }
-        } else {
-            int count = actualWindowMs >= 2000L ? 4 : 3;
-            long step = actualWindowMs / (long)count;
-            for (int idx = 0; idx < count; ++idx) {
-                long wStart = (long)idx * step;
-                long wEnd = idx + 1 == count ? actualWindowMs : (long)(idx + 1) * step;
-                wordSpans.add(new long[]{wStart, Math.max(wStart + 150L, wEnd)});
-            }
-        }
-
-        boolean vocalDom = meanVocal > meanBass * 0.58 && vocalFlux >= 0.08;
-        boolean bassDom = !vocalDom && meanBass >= meanVocal * 1.10;
-        String[][] palette;
-        if (vocalDom && wordSpans.size() >= 5) {
-            palette = FAST_VOCAL_PHRASES;
-        } else if (vocalDom) {
-            palette = MELODIC_VOCAL_PHRASES;
-        } else if (bassDom) {
-            palette = BASS_DROP_PHRASES;
-        } else {
-            palette = GROOVE_PHRASES;
-        }
-
-        int seq = this.phraseCounter++;
-        String[] template = palette[Math.floorMod(seq, palette.length)];
-        String[] chosenTokens = new String[wordSpans.size()];
-        for (int i = 0; i < wordSpans.size(); ++i) {
-            chosenTokens[i] = template[i % template.length];
-        }
-
-        StringBuilder sb = new StringBuilder();
-        List<LyricLine.Word> words = new ArrayList<LyricLine.Word>(wordSpans.size());
-        for (int i = 0; i < wordSpans.size(); ++i) {
-            if (i > 0) {
-                sb.append(' ');
-            }
-            int charStart = sb.length();
-            String tok = chosenTokens[i];
-            sb.append(tok);
-            int charEnd = sb.length();
-            long[] span = wordSpans.get(i);
-            words.add(new LyricLine.Word(startPosMs + span[0], startPosMs + span[1], tok, charStart, charEnd));
-        }
-        String fullText = sb.toString().trim();
-        if (fullText.isEmpty() || words.isEmpty()) {
-            return null;
-        }
-        long lastWordEnd = startPosMs + wordSpans.get(wordSpans.size() - 1)[1];
-        return new LyricLine(startPosMs, startPosMs + actualWindowMs, Math.max(startPosMs + 150L, lastWordEnd), fullText, words);
+    private static byte[] wrapCanonicalWav(byte[] pcm16, int sampleRate) {
+        int dataLen = pcm16.length;
+        ByteBuffer hdr = ByteBuffer.allocate(44 + dataLen).order(ByteOrder.LITTLE_ENDIAN);
+        hdr.put("RIFF".getBytes(StandardCharsets.US_ASCII));
+        hdr.putInt(36 + dataLen);
+        hdr.put("WAVEfmt ".getBytes(StandardCharsets.US_ASCII));
+        hdr.putInt(16);
+        hdr.putShort((short)1);
+        hdr.putShort((short)1);
+        hdr.putInt(sampleRate);
+        hdr.putInt(sampleRate * 2);
+        hdr.putShort((short)2);
+        hdr.putShort((short)16);
+        hdr.put("data".getBytes(StandardCharsets.US_ASCII));
+        hdr.putInt(dataLen);
+        hdr.put(pcm16);
+        return hdr.array();
     }
 }

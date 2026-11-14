@@ -132,6 +132,13 @@ public final class AcousticLagEstimator {
         return biquad(in, (1.0 - cos) / 2.0, 1.0 - cos, (1.0 - cos) / 2.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha);
     }
 
+    public static float[] extractSpeechBand(float[] pcm, int sr) {
+        if (pcm == null || pcm.length == 0 || sr <= 0) {
+            return pcm;
+        }
+        return lowPass(highPass(highPass(pcm, sr, 180.0), sr, 180.0), sr, 4200.0);
+    }
+
     public static double[][] audioFeatures(float[] pcm, int sr) {
         int hop = Math.max(1, sr * HOP_MS / 1000);
         int win = hop * 2;

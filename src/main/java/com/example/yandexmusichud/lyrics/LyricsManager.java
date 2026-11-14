@@ -275,6 +275,10 @@ public class LyricsManager {
         return this.liveAudioGenerator.isCapturingOrActive();
     }
 
+    public String getLiveAudioStatusLabel() {
+        return this.liveAudioGenerator.getStatusLabel();
+    }
+
     public List<LyricLine> findLyrics(String artist, String title) {
         if (title == null || title.isBlank()) {
             return null;
@@ -296,6 +300,7 @@ public class LyricsManager {
     }
 
     public void shutdown() {
+        this.liveAudioGenerator.shutdown();
         this.executor.shutdownNow();
     }
 
@@ -2155,7 +2160,7 @@ public class LyricsManager {
         try {
             List<LyricLine> lines;
             JsonObject lrc;
-            String searchUrl = "https://music.163.com/api/search/get/web?s=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&type=1&offset=0&total=true&limit=5";
+            String searchUrl = "https://music.163.com/api/search/get?s=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&type=1&offset=0&total=true&limit=5";
             Map<String, String> headers = Map.of("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer", "https://music.163.com/");
             String searchResp = LyricsManager.httpGet(searchUrl, headers, 2500);
             if (searchResp == null) {
