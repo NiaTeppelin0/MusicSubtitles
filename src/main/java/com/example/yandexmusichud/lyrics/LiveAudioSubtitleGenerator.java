@@ -62,6 +62,9 @@ public class LiveAudioSubtitleGenerator {
     private record RecognitionResult(String text, double confidence, String lang) {
     }
 
+    public record VerificationRecognition(String text, double confidence, String lang, double activeFraction) {
+    }
+
     private final LyricsManager lyricsManager;
     private final HttpClient httpClient;
     private final ExecutorService sttExecutor;
@@ -184,6 +187,75 @@ public class LiveAudioSubtitleGenerator {
         }
     }
 
+    private record AnalyzedSpeech(RecognitionResult result, double[] smoothActivity, double activeFraction) {
+    }
+
+    public VerificationRecognition verifyAudioSnippet(float[] rawSamples, int sampleRate, TrackState state) {
+        if (rawSamples == null || sampleRate <= 0 || rawSamples.length < sampleRate) {
+            return null;
+        }
+        AnalyzedSpeech analyzed = this.analyzeSpeechSamples(rawSamples, sampleRate, state, 0.0010, 0.00055, 0.0020, 0.14, false);
+        if (analyzed == null || analyzed.result() == null || analyzed.result().text() == null || analyzed.result().text().isEmpty()) {
+            return null;
+        }
+        RecognitionResult res = analyzed.result();
+        if (res.confidence() >= 0.75 && res.lang() != null && !res.lang().isEmpty()) {
+            this.stickyLang = res.lang();
+        }
+        return new VerificationRecognition(res.text(), res.confidence(), res.lang(), analyzed.activeFraction());
+    }
+
+    private AnalyzedSpeech analyzeSpeechSamples(
+        float[] rawSamples,
+        int sampleRate,
+        TrackState state,
+        double minRawRms,
+        double minBandRms,
+        double minBandPeak,
+        double minActiveFraction,
+        boolean updateStatusLabel
+    ) {
+        double rawRms = LiveAudioSubtitleGenerator.computeRms(rawSamples);
+        if (rawRms < minRawRms) {
+            if (updateStatusLabel) {
+                this.statusLabel = "Тишина / пауза";
+            }
+            return null;
+        }
+        float[] speechBand = AcousticLagEstimator.extractSpeechBand(rawSamples, sampleRate);
+        double bandRms = LiveAudioSubtitleGenerator.computeRms(speechBand);
+        double bandPeak = LiveAudioSubtitleGenerator.computePeak(speechBand);
+        if (bandRms < minBandRms || bandPeak < minBandPeak) {
+            if (updateStatusLabel) {
+                this.statusLabel = "Инструментал / низкий сигнал";
+            }
+            return null;
+        }
+        double[][] features = AcousticLagEstimator.audioFeatures(rawSamples, sampleRate);
+        double[] smoothActivity = features.length > 0 ? features[0] : new double[0];
+        double activeFraction = LiveAudioSubtitleGenerator.computeActiveFraction(smoothActivity, 0.14);
+        if (activeFraction < minActiveFraction) {
+            return null;
+        }
+
+        byte[] speechPcm16 = LiveAudioSubtitleGenerator.encodePreEmphPcm16(speechBand);
+        List<String> langs = this.resolveLanguageOrder(state);
+        String primaryLang = langs.get(0);
+        String secondaryLang = langs.size() > 1 ? langs.get(1) : "";
+
+        if (updateStatusLabel) {
+            this.statusLabel = "Распознавание речи (" + primaryLang + ")...";
+        }
+        RecognitionResult best = this.recognizeBest(speechPcm16, rawSamples, sampleRate, primaryLang, secondaryLang, rawRms, activeFraction);
+        if (best == null || best.text() == null || best.text().isEmpty()) {
+            if (updateStatusLabel) {
+                this.statusLabel = activeFraction > 0.2 ? "Речь не разобрана (инструментал/шум)" : "Инструментальная секция";
+            }
+            return null;
+        }
+        return new AnalyzedSpeech(best, smoothActivity, activeFraction);
+    }
+
     private void processCapturedWav(byte[] wav, String trackKey, TrackState state, long captureStartPos, long captureDurMs) {
         if (!trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
             return;
@@ -197,33 +269,11 @@ public class LiveAudioSubtitleGenerator {
         if (rawSamples.length < sampleRate) {
             return;
         }
-        double rawRms = LiveAudioSubtitleGenerator.computeRms(rawSamples);
-        if (rawRms < 0.0007) {
-            this.statusLabel = "Тишина / пауза";
+        AnalyzedSpeech analyzed = this.analyzeSpeechSamples(rawSamples, sampleRate, state, 0.0007, 0.00045, 0.0018, 0.0, true);
+        if (analyzed == null) {
             return;
         }
-        float[] speechBand = AcousticLagEstimator.extractSpeechBand(rawSamples, sampleRate);
-        double bandRms = LiveAudioSubtitleGenerator.computeRms(speechBand);
-        double bandPeak = LiveAudioSubtitleGenerator.computePeak(speechBand);
-        if (bandRms < 0.00045 || bandPeak < 0.0018) {
-            this.statusLabel = "Инструментал / низкий сигнал";
-            return;
-        }
-        double[][] features = AcousticLagEstimator.audioFeatures(rawSamples, sampleRate);
-        double[] smoothActivity = features.length > 0 ? features[0] : new double[0];
-        double activeFraction = LiveAudioSubtitleGenerator.computeActiveFraction(smoothActivity, 0.14);
-
-        byte[] speechPcm16 = LiveAudioSubtitleGenerator.encodePreEmphPcm16(speechBand);
-        List<String> langs = this.resolveLanguageOrder(state);
-        String primaryLang = langs.get(0);
-        String secondaryLang = langs.size() > 1 ? langs.get(1) : "";
-
-        this.statusLabel = "Распознавание речи (" + primaryLang + ")...";
-        RecognitionResult best = this.recognizeBest(speechPcm16, rawSamples, sampleRate, primaryLang, secondaryLang, rawRms, activeFraction);
-        if (best == null || best.text() == null || best.text().isEmpty()) {
-            this.statusLabel = activeFraction > 0.2 ? "Речь не разобрана (инструментал/шум)" : "Инструментальная секция";
-            return;
-        }
+        RecognitionResult best = analyzed.result();
         if (!trackKey.equals(this.activeTrackKey)) {
             return;
         }
@@ -239,7 +289,7 @@ public class LiveAudioSubtitleGenerator {
         this.lastEmittedAtMs = now;
         this.statusLabel = "STT OK [" + best.lang() + "]";
 
-        LyricLine synthesized = this.buildTimedLine(best.text(), smoothActivity, captureStartPos, captureDurMs);
+        LyricLine synthesized = this.buildTimedLine(best.text(), analyzed.smoothActivity(), captureStartPos, captureDurMs);
         if (synthesized != null) {
             this.lyricsManager.appendGeneratedLiveLine(trackKey, synthesized);
         }

@@ -34,7 +34,18 @@ public class GeniusLyricsProvider {
     private static final Pattern CONTRIBUTORS_PATTERN = Pattern.compile("^\\d+\\s+Contributors.*$", Pattern.CASE_INSENSITIVE);
     private static volatile long cooldownUntilMs = 0L;
 
+    public record MatchResult(String lyrics, String matchedTitle, String matchedArtist) {
+    }
+
+    private record SelectedSong(String url, String matchedTitle, String matchedArtist) {
+    }
+
     public static String fetchLyrics(String title, String artist, long timeoutMs) {
+        MatchResult res = GeniusLyricsProvider.fetchMatch(title, artist, timeoutMs);
+        return res != null ? res.lyrics() : null;
+    }
+
+    public static MatchResult fetchMatch(String title, String artist, long timeoutMs) {
         if (title == null || title.isBlank()) {
             return null;
         }
@@ -70,12 +81,12 @@ public class GeniusLyricsProvider {
             if (!respObj.has("sections") || !respObj.get("sections").isJsonArray()) {
                 return null;
             }
-            String bestSongUrl = GeniusLyricsProvider.selectBestSongUrl(respObj.getAsJsonArray("sections"), title, artist);
-            if (bestSongUrl == null) {
+            SelectedSong bestSong = GeniusLyricsProvider.selectBestSong(respObj.getAsJsonArray("sections"), title, artist);
+            if (bestSong == null) {
                 return null;
             }
             long remMs = Math.max(700L, totalBudgetMs - (System.nanoTime() - startNs) / 1000000L);
-            HttpRequest pageReq = HttpRequest.newBuilder().uri(URI.create(bestSongUrl)).header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36").header("Accept", "text/html,application/xhtml+xml").timeout(Duration.ofMillis(remMs)).GET().build();
+            HttpRequest pageReq = HttpRequest.newBuilder().uri(URI.create(bestSong.url())).header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36").header("Accept", "text/html,application/xhtml+xml").timeout(Duration.ofMillis(remMs)).GET().build();
             HttpResponse<String> pageResp = HTTP_CLIENT.send(pageReq, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             int pageStatus = pageResp.statusCode();
             if (pageStatus == 403 || pageStatus == 429 || pageStatus >= 500) {
@@ -85,7 +96,11 @@ public class GeniusLyricsProvider {
             if (pageStatus != 200 || pageResp.body() == null || pageResp.body().isBlank()) {
                 return null;
             }
-            return GeniusLyricsProvider.parseGeniusHtml(pageResp.body());
+            String parsedLyrics = GeniusLyricsProvider.parseGeniusHtml(pageResp.body());
+            if (parsedLyrics == null || parsedLyrics.isBlank()) {
+                return null;
+            }
+            return new MatchResult(parsedLyrics, bestSong.matchedTitle(), bestSong.matchedArtist());
         }
         catch (Exception ignored) {
             cooldownUntilMs = System.currentTimeMillis() + 60000L;
@@ -93,9 +108,10 @@ public class GeniusLyricsProvider {
         }
     }
 
-    private static String selectBestSongUrl(JsonArray sections, String title, String artist) {
-        String bestSongUrl = null;
+    private static SelectedSong selectBestSong(JsonArray sections, String title, String artist) {
+        SelectedSong bestSong = null;
         double bestScore = -1.0;
+        boolean hasTargetArtist = artist != null && !artist.isBlank();
         for (JsonElement secEl : sections) {
             if (!secEl.isJsonObject()) {
                 continue;
@@ -115,31 +131,43 @@ public class GeniusLyricsProvider {
                 }
                 JsonObject res = hit.getAsJsonObject("result");
                 String resTitle = res.has("title") && res.get("title").isJsonPrimitive() ? res.get("title").getAsString() : "";
-                String resArtist = "";
+                String primaryArtist = "";
                 if (res.has("primary_artist") && res.get("primary_artist").isJsonObject()) {
                     JsonObject pa = res.getAsJsonObject("primary_artist");
-                    resArtist = pa.has("name") && pa.get("name").isJsonPrimitive() ? pa.get("name").getAsString() : "";
+                    primaryArtist = pa.has("name") && pa.get("name").isJsonPrimitive() ? pa.get("name").getAsString() : "";
                 }
+                String artistNames = res.has("artist_names") && res.get("artist_names").isJsonPrimitive() ? res.get("artist_names").getAsString() : "";
                 String url = res.has("url") && res.get("url").isJsonPrimitive() ? res.get("url").getAsString() : "";
-                if (url.isBlank()) {
+                if (url.isBlank() || LyricsConsensusEngine.hasVersionConflict(title, resTitle)) {
                     continue;
                 }
                 double tSim = GeniusLyricsProvider.computeStringSimilarity(title, resTitle);
-                double aSim = artist != null && !artist.isBlank() ? GeniusLyricsProvider.computeStringSimilarity(artist, resArtist) : 1.0;
-                if (tSim < 0.35) {
+                if (tSim < 0.55) {
                     continue;
                 }
-                if (artist != null && !artist.isBlank() && aSim < 0.25 && tSim < 0.85) {
+                String combinedCandArtist = !artistNames.isBlank() ? artistNames : primaryArtist;
+                double aSim = -1.0;
+                if (hasTargetArtist) {
+                    double pSim = LyricsConsensusEngine.computeArtistSimilarity(artist, primaryArtist);
+                    double allSim = LyricsConsensusEngine.computeArtistSimilarity(artist, artistNames);
+                    aSim = Math.max(pSim, allSim);
+                    if (aSim >= 0.0 && aSim < 0.35) {
+                        continue;
+                    }
+                    if (aSim < 0.0 && (tSim < 0.85 || !LyricsConsensusEngine.isSpecificTitle(title))) {
+                        continue;
+                    }
+                } else if (tSim < 0.72) {
                     continue;
                 }
-                double score = tSim * 0.65 + aSim * 0.35;
+                double score = hasTargetArtist && aSim >= 0.0 ? (tSim * 0.60 + aSim * 0.40) : tSim;
                 if (score > bestScore) {
                     bestScore = score;
-                    bestSongUrl = url;
+                    bestSong = new SelectedSong(url, resTitle, combinedCandArtist);
                 }
             }
         }
-        return bestScore >= 0.50 ? bestSongUrl : null;
+        return bestScore >= 0.60 ? bestSong : null;
     }
 
     private static List<String> extractBalancedDivs(String html, Pattern openPattern) {
@@ -226,41 +254,6 @@ public class GeniusLyricsProvider {
     }
 
     public static double computeStringSimilarity(String s1, String s2) {
-        if (s1 == null || s2 == null) {
-            return 0.0;
-        }
-        String a = GeniusLyricsProvider.normalize(s1);
-        String b = GeniusLyricsProvider.normalize(s2);
-        if (a.isEmpty() || b.isEmpty()) {
-            return 0.0;
-        }
-        if (a.equals(b)) {
-            return 1.0;
-        }
-        if (a.contains(b) || b.contains(a)) {
-            return (double)Math.min(a.length(), b.length()) / (double)Math.max(a.length(), b.length());
-        }
-        String[] wordsA = WHITESPACE_PATTERN.split(a);
-        String[] wordsB = WHITESPACE_PATTERN.split(b);
-        HashSet<String> setA = new HashSet<String>(Arrays.asList(wordsA));
-        HashSet<String> setB = new HashSet<String>(Arrays.asList(wordsB));
-        setA.removeIf(w -> w.length() < 2 && (w.isEmpty() || w.codePointAt(0) <= 0x2E80));
-        setB.removeIf(w -> w.length() < 2 && (w.isEmpty() || w.codePointAt(0) <= 0x2E80));
-        if (setA.isEmpty() || setB.isEmpty()) {
-            return 0.0;
-        }
-        HashSet<String> intersection = new HashSet<String>(setA);
-        intersection.retainAll(setB);
-        HashSet<String> union = new HashSet<String>(setA);
-        union.addAll(setB);
-        return (double)intersection.size() / (double)union.size();
-    }
-
-    private static String normalize(String s) {
-        if (s == null) {
-            return "";
-        }
-        String noPunct = NON_ALNUM_PATTERN.matcher(s.toLowerCase(Locale.ROOT).replace('\u0451', '\u0435')).replaceAll("");
-        return WHITESPACE_PATTERN.matcher(noPunct).replaceAll(" ").trim();
+        return LyricsConsensusEngine.computeTitleSimilarity(s1, s2);
     }
 }
