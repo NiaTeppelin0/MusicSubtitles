@@ -181,8 +181,9 @@ public class NowPlayingClient {
                     float speed = this.getFloatOrDefault(json, "playbackSpeed", 1.0f);
                     TrackState prev = this.currentState.get();
                     long reportedPosMs = posMs;
-                    long latencyMs = Math.max(0L, Math.min(200L, (tEnd - tStart) / 2L));
-                    long rawPosMs = reportedPosMs > 0L ? reportedPosMs + latencyMs : reportedPosMs;
+                    long latencyMs = Math.max(0L, Math.min(120L, (tEnd - tStart) / 2L));
+                    float effSpeed = speed > 0.0f ? speed : 1.0f;
+                    long rawPosMs = isPlaying && reportedPosMs > 0L ? reportedPosMs + (long)((float)latencyMs * effSpeed) : reportedPosMs;
                     posMs = rawPosMs;
                     if (prev != null && prev.isActive() && prev.title().equals(title) && prev.artist().equals(artist)) {
                         boolean rawChanged = reportedPosMs != this.lastRawReportedPosMs;
@@ -192,15 +193,24 @@ public class NowPlayingClient {
                         }
                         if (prev.isPlaying() && isPlaying) {
                             long prevPos = prev.getInterpolatedPositionMs();
-                            long diff = rawPosMs - prevPos;
                             if (!rawChanged) {
                                 posMs = durMs > 0L ? Math.min(durMs, prevPos) : prevPos;
                                 receivedTime = System.currentTimeMillis();
-                            } else if (Math.abs(diff) < 250L) {
-                                posMs = prevPos + (long)((double)diff * 0.5);
-                                receivedTime = System.currentTimeMillis();
                             } else {
-                                posMs = rawPosMs;
+                                long diff = rawPosMs - prevPos;
+                                long absDiff = Math.abs(diff);
+                                if (absDiff <= 180L) {
+                                    posMs = prevPos + (long)((double)diff * 0.22);
+                                } else if (absDiff <= 1150L) {
+                                    posMs = prevPos + (long)((double)diff * 0.38);
+                                } else {
+                                    posMs = rawPosMs;
+                                }
+                                if (durMs > 0L) {
+                                    posMs = Math.max(0L, Math.min(durMs, posMs));
+                                } else {
+                                    posMs = Math.max(0L, posMs);
+                                }
                                 receivedTime = System.currentTimeMillis();
                             }
                         }

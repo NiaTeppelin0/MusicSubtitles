@@ -2,6 +2,7 @@ package com.example.yandexmusichud.lyrics;
 
 import com.example.yandexmusichud.lyrics.LyricLine;
 import com.example.yandexmusichud.lyrics.LyricsManager;
+import com.example.yandexmusichud.lyrics.StudioCascadeAligner;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -16,6 +17,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executors;
 
@@ -86,7 +88,7 @@ public class LiveCaptionServer {
             return null;
         }
         String o = origin.trim().toLowerCase(Locale.ROOT);
-        if (o.equals("https://www.youtube.com") || o.equals("https://music.youtube.com") || o.equals("https://m.youtube.com") || o.equals("https://youtube.com")) {
+        if (o.equals("https://www.youtube.com") || o.equals("https://music.youtube.com") || o.equals("https://m.youtube.com") || o.equals("https://youtube.com") || o.equals("https://soundcloud.com") || o.equals("https://open.spotify.com") || o.equals("https://music.yandex.ru") || o.equals("https://music.yandex.com") || o.equals("https://vk.com")) {
             return origin.trim();
         }
         return "";
@@ -168,7 +170,8 @@ public class LiveCaptionServer {
                 long rawDuration = json.has("durationMs") && json.get("durationMs").isJsonPrimitive() && json.getAsJsonPrimitive("durationMs").isNumber() ? json.getAsJsonPrimitive("durationMs").getAsLong() : 3500L;
                 long durationMs = Math.max(250L, Math.min(30000L, rawDuration));
                 if (!text.isEmpty()) {
-                    LiveCaptionServer.this.lyricsManager.pushLiveCaption(text, durationMs);
+                    List<LyricLine.Word> words = StudioCascadeAligner.segmentWordsBySyllables(LyricLine.stripFormattingTags(text.trim()), 0L, durationMs);
+                    LiveCaptionServer.this.lyricsManager.pushLiveCaptionWithWords(text, durationMs, words);
                     LiveCaptionServer.sendResponse(exchange, 200, "{\"success\":true}");
                 } else {
                     LiveCaptionServer.sendResponse(exchange, 400, "{\"error\":\"Empty text\"}");
@@ -227,7 +230,35 @@ public class LiveCaptionServer {
                         endMs = Math.max(startMs + 100L, endMs);
                         String text = obj.has("text") && obj.get("text").isJsonPrimitive() ? obj.get("text").getAsString() : "";
                         if (text.trim().isEmpty()) continue;
-                        lines.add(new LyricLine(startMs, endMs, text.trim(), null));
+                        String trimmedText = text.trim();
+                        List<LyricLine.Word> words = null;
+                        if (obj.has("words") && obj.get("words").isJsonArray()) {
+                            JsonArray wArr = obj.getAsJsonArray("words");
+                            ArrayList<LyricLine.Word> parsedWords = new ArrayList<LyricLine.Word>();
+                            int cursor = 0;
+                            for (JsonElement wEl : wArr) {
+                                if (!wEl.isJsonObject()) continue;
+                                JsonObject wObj = wEl.getAsJsonObject();
+                                String wText = wObj.has("text") && wObj.get("text").isJsonPrimitive() ? wObj.get("text").getAsString().trim() : "";
+                                if (wText.isEmpty()) continue;
+                                long ws = wObj.has("startMs") && wObj.get("startMs").isJsonPrimitive() && wObj.getAsJsonPrimitive("startMs").isNumber() ? Math.max(startMs, wObj.getAsJsonPrimitive("startMs").getAsLong()) : startMs;
+                                long we = wObj.has("endMs") && wObj.get("endMs").isJsonPrimitive() && wObj.getAsJsonPrimitive("endMs").isNumber() ? wObj.getAsJsonPrimitive("endMs").getAsLong() : ws + 250L;
+                                we = Math.max(ws + 40L, Math.min(endMs, we));
+                                int cs = wObj.has("charStart") && wObj.get("charStart").isJsonPrimitive() ? wObj.getAsJsonPrimitive("charStart").getAsInt() : trimmedText.indexOf(wText, cursor);
+                                if (cs < 0) cs = cursor;
+                                int ce = wObj.has("charEnd") && wObj.get("charEnd").isJsonPrimitive() ? wObj.getAsJsonPrimitive("charEnd").getAsInt() : Math.min(trimmedText.length(), cs + wText.length());
+                                cursor = ce;
+                                parsedWords.add(new LyricLine.Word(ws, we, wText, cs, ce));
+                            }
+                            if (!parsedWords.isEmpty()) {
+                                words = parsedWords;
+                            }
+                        }
+                        if (words == null || words.isEmpty()) {
+                            words = StudioCascadeAligner.segmentWordsBySyllables(LyricLine.stripFormattingTags(trimmedText), startMs, endMs);
+                        }
+                        long vocalEndMs = (words != null && !words.isEmpty()) ? words.get(words.size() - 1).endMs() : endMs;
+                        lines.add(new LyricLine(startMs, endMs, vocalEndMs, trimmedText, words));
                     }
                 }
                 if (!lines.isEmpty()) {

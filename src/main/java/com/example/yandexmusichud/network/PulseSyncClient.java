@@ -128,8 +128,11 @@ public class PulseSyncClient {
                             } else {
                                 this.lastRawReportedPosMs = reportedPosMs;
                                 long diff = rawPosMs - prevPos;
-                                if (Math.abs(diff) < 1150L) {
-                                    posMs = prevPos + (long)((double)diff * 0.35);
+                                long absDiff = Math.abs(diff);
+                                if (absDiff <= 180L) {
+                                    posMs = prevPos + (long)((double)diff * 0.22);
+                                } else if (absDiff <= 1150L) {
+                                    posMs = prevPos + (long)((double)diff * 0.38);
                                 } else {
                                     posMs = rawPosMs;
                                 }

@@ -141,17 +141,22 @@ public final class AcousticLagEstimator {
         float[] band = lowPass(highPass(highPass(pcm, sr, 230.0), sr, 230.0), sr, 3600.0);
         int frames = (pcm.length - win) / hop + 1;
         double[] logE = new double[frames];
+        double[] sibE = new double[frames];
         double[] voicing = new double[frames];
         int minLag = Math.max(2, sr / 420);
         int maxLag = Math.min(win - 2, sr / 75);
         for (int f = 0; f < frames; ++f) {
             int off = f * hop;
             double e = 0.0;
+            double sibSum = 0.0;
             for (int i = 0; i < win; ++i) {
                 double v = band[off + i];
                 e += v * v;
+                double sib = Math.abs(pcm[off + i] - pcm[Math.max(0, off + i - 1)]);
+                sibSum += sib;
             }
             logE[f] = Math.log10(e / win + 1.0E-9);
+            sibE[f] = Math.log10(sibSum / win + 1.0E-9);
             if (e < 1.0E-7) {
                 voicing[f] = 0.0;
                 continue;
@@ -184,11 +189,18 @@ public final class AcousticLagEstimator {
         double floor = sorted[(int)(frames * 0.12)];
         double ceil = sorted[Math.min(frames - 1, (int)(frames * 0.97))];
         double range = Math.max(0.3, ceil - floor);
+        double[] sortedSib = Arrays.copyOf(sibE, frames);
+        Arrays.sort(sortedSib);
+        double sibFloor = sortedSib[(int)(frames * 0.12)];
+        double sibCeil = sortedSib[Math.min(frames - 1, (int)(frames * 0.97))];
+        double sibRange = Math.max(0.3, sibCeil - sibFloor);
         double[] activity = new double[frames];
+        double[] sibNorm = new double[frames];
         for (int f = 0; f < frames; ++f) {
             double loud = Math.max(0.0, Math.min(1.2, (logE[f] - floor) / range));
             double voiced = Math.max(0.0, Math.min(1.0, (voicing[f] - 0.30) / 0.50));
             activity[f] = loud * (0.25 + 0.75 * voiced);
+            sibNorm[f] = Math.max(0.0, Math.min(1.2, (sibE[f] - sibFloor) / sibRange));
         }
         double[] smooth = new double[frames];
         for (int f = 0; f < frames; ++f) {
@@ -200,7 +212,9 @@ public final class AcousticLagEstimator {
         double[] onset = new double[frames];
         for (int f = 0; f < frames; ++f) {
             double prev = Math.max(smooth[Math.max(0, f - 1)], smooth[Math.max(0, f - 3)]);
-            onset[f] = Math.max(0.0, smooth[f] - prev);
+            double sibPrev = Math.max(sibNorm[Math.max(0, f - 1)], sibNorm[Math.max(0, f - 3)]);
+            double sibOnset = Math.max(0.0, sibNorm[f] - sibPrev);
+            onset[f] = Math.max(0.0, smooth[f] - prev) + 0.25 * sibOnset;
         }
         return new double[][]{smooth, onset};
     }
@@ -346,7 +360,7 @@ public final class AcousticLagEstimator {
             } else if (Double.isNaN(po)) {
                 s = pa;
             } else {
-                s = 0.45 * pa + 0.55 * po;
+                s = 0.38 * pa + 0.62 * po;
             }
             score[j] = s;
             if (!Double.isNaN(s)) {
@@ -399,7 +413,7 @@ public final class AcousticLagEstimator {
         }
         double lagMs = (best + delta) * HOP_MS - (double)lagFrames * HOP_MS;
         boolean atEdge = best <= 1 || best >= lags - 2;
-        boolean reliable = !atEdge && bestVal >= 0.28 && z >= 2.8 && sharpness >= 0.045;
+        boolean reliable = !atEdge && bestVal >= 0.22 && z >= 2.35 && sharpness >= 0.032;
         return new Estimate(lagMs, bestVal, z, sharpness, reliable);
     }
 }

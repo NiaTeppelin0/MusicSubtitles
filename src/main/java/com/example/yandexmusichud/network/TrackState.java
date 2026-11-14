@@ -150,7 +150,7 @@ public record TrackState(boolean isActive, String title, String artist, String a
         if (!this.isPlaying() || this.receivedAtMs == 0L) {
             return this.positionMs;
         }
-        long elapsed = System.currentTimeMillis() - this.receivedAtMs;
+        long elapsed = Math.max(0L, System.currentTimeMillis() - this.receivedAtMs);
         float speed = this.playbackSpeed > 0.0f ? this.playbackSpeed : 1.0f;
         long interpolated = this.positionMs + (speed == 1.0f ? elapsed : (long)((float)elapsed * speed));
         return this.durationMs > 0L ? Math.min(interpolated, this.durationMs) : interpolated;

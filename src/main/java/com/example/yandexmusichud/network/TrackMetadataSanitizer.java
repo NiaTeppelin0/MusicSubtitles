@@ -10,7 +10,9 @@ import java.util.regex.Pattern;
 public class TrackMetadataSanitizer {
     private static final Pattern TRACK_NUMBER_PREFIX = Pattern.compile("^(?:track\\s*)?\\d{1,3}[.\\-_\\s]+(?=[A-Za-zА-Яа-яЁё0-9])", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern RADIO_PREFIX = Pattern.compile("^(?:record|радио\\s*рекорд|dfm|europa\\s*plus|европа\\s*плюс|energy|nrj|kiss\\s*fm|maximum|максимум|nashe|наше\\s*радио|retro\\s*fm|ретро\\s*фм)\\s*[:\\-|•~]+\\s*", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
-    private static final Pattern VIDEO_NOISE_TAGS = Pattern.compile("(?iu)[\\(\\[\\{][^\\)\\]\\}]*(?:official\\s*(?:music\\s*)?video|official\\s*video|official\\s*audio|audio\\s*track|lyric\\s*video|official\\s*visualizer|visualizer|video\\s*clip|music\\s*video|clip|клип|видео|премьера|аудио|\\baudio\\b|сниппет|муд\\s*видео|текст\\s*песни|слова\\s*песни|mv|hd|4k(?:\\s*60fps)?|1080p|720p|hq|uhd|full\\s*hd|soundtrack|ost|original\\s*soundtrack|remaster(?:ed)?|live\\s*performance|live\\s*session)[^\\)\\]\\}]*[\\)\\]\\}]");
+    private static final Pattern VIDEO_NOISE_TAGS = Pattern.compile("(?iu)[\\(\\[\\{][^\\)\\]\\}]*(?:official\\s*(?:music\\s*)?video|official\\s*video|official\\s*audio|audio\\s*track|lyric\\s*video|lyrics?|official\\s*visualizer|visualizer|video\\s*clip|music\\s*video|clip|\u043a\u043b\u0438\u043f|\u0432\u0438\u0434\u0435\u043e|\u043f\u0440\u0435\u043c\u044c\u0435\u0440\u0430|\u0430\u0443\u0434\u0438\u043e|\\baudio\\b|\u0441\u043d\u0438\u043f\u043f\u0435\u0442|\u043c\u0443\u0434\\s*\u0432\u0438\u0434\u0435\u043e|\u0442\u0435\u043a\u0441\u0442\\s*\u043f\u0435\u0441\u043d\u0438|\u0441\u043b\u043e\u0432\u0430\\s*\u043f\u0435\u0441\u043d\u0438|(?:\u0440\u0443\u0441\u0441\u043a\u0438\u0435\\s*)?\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b|\u0442\u0435\u043a\u0441\u0442|\u043f\u0435\u0440\u0435\u0432\u043e\u0434|karaoke|instrumental|tiktok[^\\)\\]\\}]*|shorts|prod\\.?[^\\)\\]\\}]*|mv|hd|4k(?:\\s*60fps)?|1080p|720p|hq|uhd|full\\s*hd|soundtrack|ost[^\\)\\]\\}]*|original\\s*soundtrack|remaster(?:ed)?|live\\s*performance|live\\s*session)[^\\)\\]\\}]*[\\)\\]\\}]");
+    private static final Pattern MODIFIER_NOISE_TAGS = Pattern.compile("(?iu)[\\(\\[\\{][^\\)\\]\\}]*(?:slowed(?:\\s*(?:\\+|&|and)?\\s*reverb)?|sped\\s*up|speed\\s*up|nightcore|fast\\s*version|reverb|bass\\s*boost(?:ed)?|ultra\\s*slowed|super\\s*slowed|tiktok\\s*(?:version|remix|edit)|prod\\.?\\s*by[^\\)\\]\\}]*)[^\\)\\]\\}]*[\\)\\]\\}]");
+    private static final Pattern TRAILING_MODIFIER_NOISE = Pattern.compile("(?iu)\\s*(?:[\\|\u2022\u00b7~\\-\u2013\u2014]|\\s*\\u002F\\u002F)\\s*(?:slowed(?:\\s*(?:\\+|&|and)?\\s*reverb)?|sped\\s*up|speed\\s*up|nightcore|fast\\s*version|bass\\s*boost(?:ed)?|lyrics?|\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b|\u0442\u0435\u043a\u0441\u0442\\s*\u043f\u0435\u0441\u043d\u0438)\\s*$");
     private static final Pattern PROMO_TRAILING_NOISE = Pattern.compile("(?iu)\\s*(?:[\\|•·~\\-–—]|\\s*\u002F\u002F)\\s*(?:премьера.*|official.*|клип.*|video.*|audio.*|lyric.*|текст\\s*песни.*|слова\\s*песни.*|release.*|out\\s*now.*)$");
     private static final Pattern YEAR_TAGS = Pattern.compile("(?i)[\\(\\[](?:20[0-2]\\d|19[5-9]\\d)[\\)\\]]");
     private static final Pattern BROWSER_TRAILING_NOISE = Pattern.compile("(?iu)\\s*(?:[\\|•·~\\-–—]\\s*(?:youtube(?:\\s*music)?|soundcloud|spotify|vk|вконтакте|yandex|яндекс(?:\\s*музыка)?|слушать(?:\\s*онлайн)?(?:\\s*на\\s*яндекс\\s*музыке)?|apple\\s*music|deezer|music|video|audio))+\\s*$");
@@ -176,6 +178,8 @@ public class TrackMetadataSanitizer {
             return "";
         }
         String res = REMASTER_PATTERN.matcher(s).replaceAll("");
+        res = MODIFIER_NOISE_TAGS.matcher(res).replaceAll("");
+        res = TRAILING_MODIFIER_NOISE.matcher(res).replaceFirst("");
         res = QUOTES_PATTERN.matcher(res).replaceAll("");
         return MULTI_SPACE_PATTERN.matcher(res).replaceAll(" ").trim();
     }
@@ -227,8 +231,14 @@ public class TrackMetadataSanitizer {
                s.equals("яндекс") || s.equals("яндекс браузер") || s.equals("яндекс.браузер") ||
                s.equals("media player") || s.equals("windows media player") || s.equals("vlc") ||
                s.equals("aimp") || s.equals("foobar2000") || s.equals("unknown") ||
-               s.equals("unknown artist") || s.equals("неизвестный исполнитель") ||
-               s.equals("моя музыка") || s.equals("local") || s.equals("music");
+               s.equals("unknown artist") || s.equals("\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439 \u0438\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c") ||
+               s.equals("\u043c\u043e\u044f \u043c\u0443\u0437\u044b\u043a\u0430") || s.equals("local") || s.equals("music") ||
+               s.equals("7clouds") || s.equals("syrebralvibes") || s.equals("trap nation") ||
+               s.equals("bass nation") || s.equals("chill nation") || s.equals("proximity") ||
+               s.equals("mrsuicidesheep") || s.equals("cloudkid") || s.equals("ncs") ||
+               s.equals("nocopyrightsounds") || s.equals("vevo") || s.equals("lyrics") ||
+               s.equals("\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b") || s.equals("\u0442\u0435\u043a\u0441\u0442 \u043f\u0435\u0441\u043d\u0438") || s.equals("\u0440\u0443\u0441\u0441\u043a\u0438\u0435 \u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b") ||
+               s.equals("\u0430\u0443\u0434\u0438\u043e") || s.equals("\u043c\u0443\u0437\u044b\u043a\u0430");
     }
 
     private static boolean isLikelyArtist(String candidate, String knownArtist) {

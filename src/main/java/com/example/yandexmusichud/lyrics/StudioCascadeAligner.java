@@ -2,8 +2,10 @@ package com.example.yandexmusichud.lyrics;
 
 import com.example.yandexmusichud.lyrics.LyricLine;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,7 +38,7 @@ public class StudioCascadeAligner {
             }
         }
         if (vocalRegions == null || vocalRegions.isEmpty()) {
-            vocalRegions = StudioCascadeAligner.generateAcousticStructure(stanzas.size(), durationMs);
+            vocalRegions = StudioCascadeAligner.generateAcousticStructure(stanzas, durationMs);
         }
         return StudioCascadeAligner.alignStanzasToVocalRegions(stanzas, vocalRegions, durationMs);
     }
@@ -111,25 +113,24 @@ public class StudioCascadeAligner {
             return regions;
         }
         double[] frameEnergy = new double[totalFrames];
-        double maxE = 1.0E-5;
         for (f = 0; f < totalFrames; ++f) {
-            double rms;
             int offset = f * frameSize;
             double sumSq = 0.0;
             for (int i = 0; i < frameSize; ++i) {
                 double s = samples[offset + i];
                 sumSq += s * s;
             }
-            frameEnergy[f] = rms = Math.sqrt(sumSq / (double)frameSize);
-            if (!(rms > maxE)) continue;
-            maxE = rms;
+            frameEnergy[f] = Math.sqrt(sumSq / (double)frameSize);
         }
-        f = 0;
-        while (f < totalFrames) {
-            int n = f++;
-            frameEnergy[n] = frameEnergy[n] / maxE;
+        double[] sortedEnergy = Arrays.copyOf(frameEnergy, totalFrames);
+        Arrays.sort(sortedEnergy);
+        double p15 = sortedEnergy[(int)((double)totalFrames * 0.15)];
+        double p95 = sortedEnergy[Math.min(totalFrames - 1, (int)((double)totalFrames * 0.95))];
+        double range = Math.max(1.0E-5, p95 - p15);
+        for (f = 0; f < totalFrames; ++f) {
+            frameEnergy[f] = Math.max(0.0, Math.min(1.5, (frameEnergy[f] - p15) / range));
         }
-        double threshold = 0.16;
+        double threshold = 0.14;
         boolean inVoice = false;
         long regionStart = 0L;
         for (int f2 = 0; f2 < totalFrames; ++f2) {
@@ -164,27 +165,74 @@ public class StudioCascadeAligner {
     }
 
     public static List<VocalRegion> generateAcousticStructure(int stanzaCount, long durationMs) {
+        ArrayList<Stanza> dummy = new ArrayList<Stanza>(Math.max(1, stanzaCount));
+        for (int i = 0; i < Math.max(1, stanzaCount); ++i) {
+            Stanza s = new Stanza("");
+            s.lines.add("line");
+            dummy.add(s);
+        }
+        return StudioCascadeAligner.generateAcousticStructure(dummy, durationMs);
+    }
+
+    public static List<VocalRegion> generateAcousticStructure(List<Stanza> stanzas, long durationMs) {
         ArrayList<VocalRegion> regions = new ArrayList<VocalRegion>();
-        stanzaCount = Math.max(1, stanzaCount);
-        long introMs = Math.min(22000L, Math.max(9000L, (long)((double)durationMs * 0.085)));
-        long outroMs = Math.min(15000L, Math.max(4000L, (long)((double)durationMs * 0.05)));
-        long singingDuration = durationMs - introMs - outroMs;
+        if (stanzas == null || stanzas.isEmpty()) {
+            regions.add(new VocalRegion(2500L, Math.max(5000L, durationMs - 3000L)));
+            return regions;
+        }
+        int stanzaCount = stanzas.size();
+        String firstHeader = stanzas.get(0).header != null ? stanzas.get(0).header.toLowerCase(Locale.ROOT) : "";
+        boolean hasIntroHeader = firstHeader.contains("intro") || firstHeader.contains("\u0438\u043d\u0442\u0440\u043e");
+        long introMs = hasIntroHeader
+            ? Math.min(4000L, Math.max(1000L, (long)((double)durationMs * 0.02)))
+            : Math.min(8500L, Math.max(2500L, (long)((double)durationMs * 0.045)));
+        long outroMs = Math.min(12000L, Math.max(3000L, (long)((double)durationMs * 0.045)));
+        if (introMs + outroMs >= durationMs - 6000L) {
+            introMs = Math.min(2000L, durationMs / 10L);
+            outroMs = Math.min(2000L, durationMs / 10L);
+        }
+        long singingDuration = Math.max(5000L, durationMs - introMs - outroMs);
         if (stanzaCount == 1) {
             regions.add(new VocalRegion(introMs, durationMs - outroMs));
             return regions;
         }
-        long soloDurationMs = durationMs > 120000L ? 6000L : 3000L;
-        long netSinging = Math.max(20000L, singingDuration - soloDurationMs);
-        long blockDuration = netSinging / (long)stanzaCount;
+        long interGapMs = stanzaCount > 2 ? 1200L : 800L;
+        long totalGaps = interGapMs * (long)(stanzaCount - 1);
+        long soloDurationMs = durationMs > 120000L && stanzaCount >= 3 ? 4500L : 0L;
+        if (totalGaps + soloDurationMs > singingDuration / 3L) {
+            soloDurationMs = 0L;
+            interGapMs = Math.min(interGapMs, Math.max(300L, (singingDuration / 5L) / (long)(stanzaCount - 1)));
+            totalGaps = interGapMs * (long)(stanzaCount - 1);
+        }
+        long netSinging = Math.max(4000L, singingDuration - soloDurationMs - totalGaps);
+        int[] stanzaWeights = new int[stanzaCount];
+        int totalWeight = 0;
+        for (int s = 0; s < stanzaCount; ++s) {
+            Stanza st = stanzas.get(s);
+            int sw = 0;
+            if (st != null && st.lines != null) {
+                for (String ln : st.lines) {
+                    if (ln != null && !ln.isBlank()) {
+                        sw += StudioCascadeAligner.countSyllables(ln) + 2;
+                    }
+                }
+            }
+            stanzaWeights[s] = Math.max(4, sw);
+            totalWeight += stanzaWeights[s];
+        }
         int halfPoint = stanzaCount / 2;
         long curPos = introMs;
         for (int s = 0; s < stanzaCount; ++s) {
-            if (s == halfPoint) {
+            if (s == halfPoint && soloDurationMs > 0L) {
                 curPos += soloDurationMs;
             }
-            long end = Math.min(durationMs - outroMs, curPos + blockDuration);
-            regions.add(new VocalRegion(curPos, end));
-            curPos = end + 1500L;
+            double ratio = totalWeight > 0 ? (double)stanzaWeights[s] / (double)totalWeight : 1.0 / (double)stanzaCount;
+            long blockDur = Math.max(1200L, Math.round((double)netSinging * ratio));
+            long end = s == stanzaCount - 1 ? durationMs - outroMs : Math.min(durationMs - outroMs, curPos + blockDur);
+            if (end > curPos + 400L) {
+                regions.add(new VocalRegion(curPos, end));
+            }
+            curPos = end + interGapMs;
         }
         return regions;
     }
@@ -357,24 +405,28 @@ public class StudioCascadeAligner {
         }
         int totalSyllables = 0;
         int[] weights = new int[tokens.length];
+        int[] punctBonus = new int[tokens.length];
         int totalWeight = 0;
         for (int i = 0; i < tokens.length; ++i) {
             String tok = tokens[i];
             int syllables = StudioCascadeAligner.countSyllables(tok);
             totalSyllables += syllables;
             int weight = syllables * 3 + Math.min(5, tok.length());
+            int pBonus = 0;
             char lastChar = tok.charAt(tok.length() - 1);
-            if (lastChar == ',' || lastChar == ';') {
-                weight += 2;
+            if (lastChar == ',' || lastChar == ';' || lastChar == ':' || lastChar == '-' || lastChar == '\u2014') {
+                pBonus = 2;
             } else if (lastChar == '.' || lastChar == '!' || lastChar == '?' || tok.endsWith("...")) {
-                weight += 3;
+                pBonus = 3;
             }
+            weight += pBonus;
+            punctBonus[i] = pBonus;
             weights[i] = weight;
             totalWeight += weight;
         }
-        long lineSlot = Math.max(250L, lineEndMs - lineStartMs);
-        long syllableBoundMs = (long)totalSyllables * 230L + (long)tokens.length * 90L + 160L;
-        long totalDur = Math.min(lineSlot, Math.max(350L, syllableBoundMs));
+        long lineSlot = Math.max(200L, lineEndMs - lineStartMs);
+        long maxReasonableVocalMs = Math.max(600L, (long)totalSyllables * 520L + (long)tokens.length * 220L + 400L);
+        long totalDur = Math.min(lineSlot, maxReasonableVocalMs);
         int charOffset = 0;
         long curStart = lineStartMs;
         for (int i = 0; i < tokens.length; ++i) {
@@ -386,8 +438,13 @@ public class StudioCascadeAligner {
             }
             charOffset = charEnd = charStart + token.length();
             double ratio = totalWeight > 0 ? (double)weights[i] / (double)totalWeight : 1.0 / (double)tokens.length;
-            long wordDur = Math.max(80L, (long)((double)totalDur * ratio));
-            long wordEnd = i == tokens.length - 1 ? curStart + wordDur : Math.min(lineEndMs, curStart + (long)((double)wordDur * 0.90));
+            long wordDur = Math.max(70L, (long)((double)totalDur * ratio));
+            long punctPauseMs = (i < tokens.length - 1 && punctBonus[i] > 0 && totalWeight > 0)
+                ? (long)((double)totalDur * ((double)punctBonus[i] / (double)totalWeight) * 0.25)
+                : 0L;
+            long wordEnd = i == tokens.length - 1
+                ? Math.min(lineEndMs, Math.max(curStart + 70L, curStart + wordDur))
+                : Math.min(lineEndMs, curStart + Math.max(55L, (long)((double)wordDur * 0.90) - punctPauseMs));
             words.add(new LyricLine.Word(curStart, wordEnd, token, charStart, charEnd));
             curStart += wordDur;
         }

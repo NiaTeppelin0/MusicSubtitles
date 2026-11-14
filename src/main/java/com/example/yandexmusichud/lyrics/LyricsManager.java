@@ -123,6 +123,8 @@ public class LyricsManager {
     private static final Pattern INSTRUMENTAL_LINE_PATTERN = Pattern.compile("(?i)^\\[?(?:instrumental|\u0441\u043e\u043b\u043e|guitar\\s*solo|\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0430\u043b|\u043c\u0443\u0437\u044b\u043a\u0430|intro|outro|solo)\\]?$");
     private static final Pattern INVALID_FILENAME_PATTERN = Pattern.compile("[\\\\/:*?\"<>|]");
     private static final Pattern ENHANCED_TAG_STRIP_PATTERN = Pattern.compile("<\\d+:\\d+(?:[.,]\\d+)?>");
+    private static final Pattern NETEASE_KRC_LINE_PATTERN = Pattern.compile("^\\[(\\d+),(\\d+)\\](.+)$");
+    private static final Pattern NETEASE_KRC_WORD_PATTERN = Pattern.compile("\\((\\d+),(\\d+)(?:,\\d+)?\\)([^\\(]+)");
     private static final Pattern LRC_TAG_STRIP_PATTERN = Pattern.compile("\\[(\\d+):(\\d+(?:[.,]\\d+)?)\\]");
     private static final Pattern NOISE_QUOTES_PATTERN = Pattern.compile("[\u25ba\u25c4\"'\u00ab\u00bb\u201c\u201d\u201e]");
     private static final Pattern CARMELL_PATTERN = Pattern.compile("(?i)carmell\\s*dansen");
@@ -422,9 +424,12 @@ public class LyricsManager {
         }
         this.triggerLiveAcousticSupervisorIfNeeded(state, lines);
         LyricLine activeLine = null;
+        long anticipationMs = 110L;
         for (int i = lines.size() - 1; i >= 0; --i) {
             LyricLine line = lines.get(i);
-            if (currentPosMs < line.startMs || currentPosMs >= line.endMs) continue;
+            long prevVocalEnd = i > 0 ? lines.get(i - 1).vocalEndMs : 0L;
+            long effectiveStart = currentPosMs >= prevVocalEnd ? Math.max(prevVocalEnd, line.startMs - anticipationMs) : line.startMs;
+            if (currentPosMs < effectiveStart || currentPosMs >= line.endMs) continue;
             activeLine = line;
             break;
         }
@@ -1011,7 +1016,6 @@ public class LyricsManager {
                             fromExplicitId = true;
                         } else {
                             plainFallback = yRes;
-                            this.lyricsCache.putIfAbsent(key, yRes.lines());
                         }
                     }
                 }
@@ -1028,8 +1032,9 @@ public class LyricsManager {
                 }
                 List<LyricLine> lines = result.lines() != null ? result.lines() : Collections.emptyList();
                 long finalDurSec = durationSec > 0L ? durationSec : this.lastFetchedDurationMs / 1000L;
-                if (!lines.isEmpty() && fromExplicitId && (isSpeedUp || isSlowed)) {
-                    lines = this.applySpeedAdjustment(lines, finalDurSec, isSpeedUp, isSlowed);
+                boolean explicitAutoTempo = fromExplicitId && result.sourceDurationMs() > 25000L && finalDurSec > 25L && Math.abs(finalDurSec * 1000L - result.sourceDurationMs()) > 12000L;
+                if (!lines.isEmpty() && fromExplicitId && (isSpeedUp || isSlowed || explicitAutoTempo)) {
+                    lines = this.applySpeedAdjustment(lines, finalDurSec, result.sourceDurationMs(), isSpeedUp, isSlowed);
                 }
                 boolean bl = mismatch = result != null && result.possibleMismatch() || this.isLyricsMismatched(lines, state);
                 if (!lines.isEmpty()) {
@@ -1158,9 +1163,25 @@ public class LyricsManager {
         }
         if (videoTitle != null && !videoTitle.isEmpty()) {
             this.lyricsCache.put(videoTitle, lines);
+            this.realSyncedTracks.add(videoTitle);
+            String cleaned = this.cleanForSearch(videoTitle);
+            if (!cleaned.isEmpty()) {
+                this.lyricsCache.put(cleaned, lines);
+                this.realSyncedTracks.add(cleaned);
+            }
+            com.example.yandexmusichud.network.TrackMetadataSanitizer.SanitizedMetadata meta = com.example.yandexmusichud.network.TrackMetadataSanitizer.sanitize(videoTitle, "", "");
+            if (meta.searchTitle() != null && !meta.searchTitle().isEmpty()) {
+                this.lyricsCache.put(meta.searchTitle(), lines);
+                this.realSyncedTracks.add(meta.searchTitle());
+            }
+            if (meta.cleanTitle() != null && !meta.cleanTitle().isEmpty()) {
+                this.lyricsCache.put(meta.cleanTitle(), lines);
+                this.realSyncedTracks.add(meta.cleanTitle());
+            }
         }
         if (this.currentTrackKey != null && !this.currentTrackKey.isEmpty()) {
             this.lyricsCache.put(this.currentTrackKey, lines);
+            this.realSyncedTracks.add(this.currentTrackKey);
         }
         System.out.println("[MusicSubtitles] Received live transcript with " + lines.size() + " lines for: " + videoTitle);
     }
@@ -1173,18 +1194,13 @@ public class LyricsManager {
         if (!HudConfig.INSTANCE.audioAnalysisEnabled || this.acousticSupervisorBusy || state == null || !state.isPlaying()) {
             return;
         }
-        if (lines == null || lines.isEmpty() || this.acousticPassesDone >= 4) {
-            return;
-        }
-        String trackKey = this.getTrackKey(state);
-        boolean isRealSync = this.realSyncedTracks.contains(trackKey);
-        boolean isMismatched = this.mismatchedTracks.contains(trackKey);
-        if (isRealSync && !isMismatched) {
+        if (lines == null || lines.isEmpty() || this.acousticPassesDone >= 8) {
             return;
         }
         long now = System.currentTimeMillis();
         long rawPos = state.getInterpolatedPositionMs();
-        if (rawPos < 3500L || now - this.lastAcousticCaptureTime < 11000L) {
+        long minIntervalMs = this.reliableLagSamples.size() < 2 ? 7500L : 20000L;
+        if (rawPos < 2200L || now - this.lastAcousticCaptureTime < minIntervalMs) {
             return;
         }
         this.checkLiveAcousticMatchAsync(state, lines, this.currentTrackKey);
@@ -1233,9 +1249,12 @@ public class LyricsManager {
                 }
                 double tauStartMs = (double)captureStartPos + 180.0;
                 boolean isRealSync = this.realSyncedTracks.contains(trackKey);
-                int maxLagMs = isRealSync ? 1800 : 14000;
-                double winStart = tauStartMs - (double)maxLagMs;
-                double winEnd = tauStartMs + (double)captureDurMs + (double)maxLagMs;
+                boolean isMismatched = this.mismatchedTracks.contains(trackKey);
+                int maxLagMs = isRealSync && !isMismatched ? 4200 : 14000;
+                float speed = state.playbackSpeed() > 0.0f ? Math.max(0.5f, Math.min(2.0f, state.playbackSpeed())) : 1.0f;
+                double trackWindowMs = (double)maxLagMs * (double)speed;
+                double winStart = tauStartMs - trackWindowMs;
+                double winEnd = tauStartMs + (double)captureDurMs * (double)speed + trackWindowMs;
                 int trackOffset = HudConfig.INSTANCE.getTrackSyncOffset(state.artist(), state.title());
                 double effShift = (double)HudConfig.INSTANCE.subtitlesOffsetMs + (double)trackOffset + this.smoothAcousticOffset + (double)PERCEPTUAL_LEAD_MS;
                 List<Double> evList = new ArrayList<Double>();
@@ -1243,21 +1262,23 @@ public class LyricsManager {
                 List<double[]> ivList = new ArrayList<double[]>();
                 for (LyricLine line : lines) {
                     if (line == null) continue;
-                    double ls = (double)line.startMs - effShift;
-                    double le = (double)line.endMs - effShift;
-                    if (le < winStart || ls > winEnd) continue;
+                    double rawLs = (double)line.startMs - effShift;
+                    double rawLe = (double)line.endMs - effShift;
+                    if (rawLe < winStart || rawLs > winEnd) continue;
+                    double ls = tauStartMs + (rawLs - tauStartMs) / (double)speed;
                     evList.add(ls);
                     wtList.add(1.0);
                     if (line.words != null && !line.words.isEmpty()) {
                         for (LyricLine.Word w : line.words) {
-                            double ws = (double)w.startMs() - effShift;
-                            double we = (double)w.endMs() - effShift;
+                            double ws = tauStartMs + ((double)w.startMs() - effShift - tauStartMs) / (double)speed;
+                            double we = tauStartMs + ((double)w.endMs() - effShift - tauStartMs) / (double)speed;
                             evList.add(ws);
                             wtList.add(0.35);
                             ivList.add(new double[]{ws, we});
                         }
                     } else {
-                        ivList.add(new double[]{ls, (double)line.vocalEndMs - effShift});
+                        double ve = tauStartMs + ((double)line.vocalEndMs - effShift - tauStartMs) / (double)speed;
+                        ivList.add(new double[]{ls, ve});
                     }
                 }
                 if (evList.isEmpty()) {
@@ -1272,13 +1293,13 @@ public class LyricsManager {
                 double[][] intervals = ivList.toArray(new double[0][]);
                 AcousticLagEstimator.Estimate est = AcousticLagEstimator.estimate(pcm.samples(), pcm.sampleRate(), eventTimes, eventWeights, intervals, tauStartMs, maxLagMs);
                 if (est.reliable()) {
-                    double lag = est.lagMs();
+                    double lag = est.lagMs() * (double)speed;
                     double candidateTotalCorrection = (double)trackOffset + this.smoothAcousticOffset + lag;
                     boolean commitConsistent = false;
                     synchronized (this.reliableLagSamples) {
                         this.reliableLagSamples.add(candidateTotalCorrection);
-                        if (Math.abs(lag) >= 60.0) {
-                            double applyFactor = isRealSync ? 0.35 : 0.85;
+                        if (Math.abs(lag) >= 45.0) {
+                            double applyFactor = isRealSync ? (Math.abs(lag) > 600.0 ? 0.65 : 0.45) : 0.85;
                             this.smoothAcousticOffset += lag * applyFactor;
                         }
                         if (this.reliableLagSamples.size() >= 2) {
@@ -1289,7 +1310,7 @@ public class LyricsManager {
                     }
                     if (commitConsistent) {
                         int finalCorrection = (int)Math.round(candidateTotalCorrection);
-                        if (Math.abs(finalCorrection) >= 60 && Math.abs(finalCorrection) <= 30000) {
+                        if (Math.abs(finalCorrection) >= 50 && Math.abs(finalCorrection) <= 30000) {
                             HudConfig.INSTANCE.setTrackSyncOffset(state.artist(), state.title(), finalCorrection);
                             this.smoothAcousticOffset = 0.0;
                             this.realSyncedTracks.add(trackKey);
@@ -1467,7 +1488,11 @@ public class LyricsManager {
                     if (cand.isSynced && !cand.possibleMismatch && cand.lines != null && !cand.lines.isEmpty() && !"NETEASE".equalsIgnoreCase(cand.provider)) {
                         if (cacheKey != null && fetchId == this.currentFetchId.get() && !this.realSyncedTracks.contains(cacheKey)) {
                             long effDur = durationSec > 0L ? durationSec : this.lastFetchedDurationMs / 1000L;
-                            List<LyricLine> quickLines = finalSpeedUp || finalSlowed ? this.applySpeedAdjustment(cand.lines, effDur, finalSpeedUp, finalSlowed) : cand.lines;
+                            boolean candAutoTempo = cand.sourceDurationMs > 25000L && effDur > 25L
+                                && Math.abs(effDur * 1000L - cand.sourceDurationMs) > 12000L
+                                && (((double)(effDur * 1000L) / (double)cand.sourceDurationMs >= 0.68 && (double)(effDur * 1000L) / (double)cand.sourceDurationMs <= 0.91)
+                                    || ((double)(effDur * 1000L) / (double)cand.sourceDurationMs >= 1.09 && (double)(effDur * 1000L) / (double)cand.sourceDurationMs <= 1.52));
+                            List<LyricLine> quickLines = finalSpeedUp || finalSlowed || candAutoTempo ? this.applySpeedAdjustment(cand.lines, effDur, cand.sourceDurationMs, finalSpeedUp, finalSlowed) : cand.lines;
                             this.lyricsCache.put(cacheKey, quickLines);
                             this.realSyncedTracks.add(cacheKey);
                         }
@@ -1504,7 +1529,7 @@ public class LyricsManager {
         }
         FetchResult result;
         if (winner.isSynced && !winner.lines.isEmpty()) {
-            result = new FetchResult(winner.lines, winner.possibleMismatch, true);
+            result = new FetchResult(winner.lines, winner.possibleMismatch, true, winner.sourceDurationMs, winner.hasEnhancedWords);
         } else if (!winner.rawText.isBlank()) {
             long targetDurMs = effectiveDurSec > 0L ? effectiveDurSec * 1000L : 180000L;
             result = this.parsePlainLyrics(winner.rawText, targetDurMs, fetchId);
@@ -1513,23 +1538,46 @@ public class LyricsManager {
         }
         if (result != null && result.lines() != null && !result.lines().isEmpty()) {
             List<LyricLine> lines = result.lines();
-            if (isSpeedUp || isSlowed) {
-                lines = this.applySpeedAdjustment(lines, effectiveDurSec, isSpeedUp, isSlowed);
+            boolean autoTempoRatio = winner.sourceDurationMs > 25000L && effectiveDurSec > 25L
+                && Math.abs(effectiveDurSec * 1000L - winner.sourceDurationMs) > 12000L
+                && (((double)(effectiveDurSec * 1000L) / (double)winner.sourceDurationMs >= 0.68 && (double)(effectiveDurSec * 1000L) / (double)winner.sourceDurationMs <= 0.91)
+                    || ((double)(effectiveDurSec * 1000L) / (double)winner.sourceDurationMs >= 1.09 && (double)(effectiveDurSec * 1000L) / (double)winner.sourceDurationMs <= 1.52));
+            if (isSpeedUp || isSlowed || autoTempoRatio) {
+                lines = this.applySpeedAdjustment(lines, effectiveDurSec, winner.sourceDurationMs, isSpeedUp, isSlowed);
             }
-            return new FetchResult(lines, result.possibleMismatch(), result.isRealSync());
+            return new FetchResult(lines, result.possibleMismatch(), result.isRealSync(), result.sourceDurationMs(), result.hasEnhancedWords());
         }
         return new FetchResult(Collections.emptyList(), false);
     }
 
     private List<LyricLine> applySpeedAdjustment(List<LyricLine> lines, long actualDurationSec, boolean isSpeedUp, boolean isSlowed) {
+        return this.applySpeedAdjustment(lines, actualDurationSec, 0L, isSpeedUp, isSlowed);
+    }
+
+    private List<LyricLine> applySpeedAdjustment(List<LyricLine> lines, long actualDurationSec, long sourceDurationMs, boolean isSpeedUp, boolean isSlowed) {
         if (lines == null || lines.isEmpty()) {
             return lines;
         }
         double factor;
         long targetDurationMs = actualDurationSec > 0L ? actualDurationSec * 1000L : 0L;
         long origLastMs = lines.get(lines.size() - 1).endMs;
-        if (targetDurationMs > 30000L && origLastMs > 30000L) {
-            double ratio = (double)targetDurationMs / (double)origLastMs;
+        if (targetDurationMs > 25000L && sourceDurationMs > 25000L) {
+            double exactRatio = (double)targetDurationMs / (double)sourceDurationMs;
+            if (Math.abs(exactRatio - 1.0) < 0.04) {
+                return lines;
+            }
+            if ((exactRatio >= 0.55 && exactRatio <= 0.95) || (exactRatio >= 1.05 && exactRatio <= 1.75)) {
+                factor = exactRatio;
+            } else if (isSpeedUp) {
+                factor = 0.75;
+            } else if (isSlowed) {
+                factor = 1.3;
+            } else {
+                return lines;
+            }
+        } else if (targetDurationMs > 30000L && origLastMs > 30000L) {
+            long estimatedOrigDurationMs = origLastMs + 12000L;
+            double ratio = (double)targetDurationMs / (double)estimatedOrigDurationMs;
             if (Math.abs(ratio - 1.0) < 0.05) {
                 return lines;
             }
@@ -1705,7 +1753,8 @@ public class LyricsManager {
                         if (lrcContent != null && !lrcContent.isEmpty() && fetchId == this.currentFetchId.get()) {
                             List<LyricLine> lines = this.parseLrc(lrcContent);
                             if (!lines.isEmpty()) {
-                                return new FetchResult(lines, possibleMismatch, true);
+                                boolean enhanced = ENHANCED_TAG_STRIP_PATTERN.matcher(lrcContent).find();
+                                return new FetchResult(lines, possibleMismatch, true, 0L, enhanced);
                             }
                         }
                     }
@@ -1884,7 +1933,7 @@ public class LyricsManager {
 
                 FetchResult lrcRes = this.fetchYandexLrcLyrics(trackId, foundArtist.isEmpty() ? artistName : foundArtist, foundTitle.isEmpty() ? trackName : foundTitle, fetchId, possibleMismatch);
                 if (lrcRes != null && lrcRes.lines() != null && !lrcRes.lines().isEmpty()) {
-                    return lrcRes;
+                    return new FetchResult(lrcRes.lines(), lrcRes.possibleMismatch(), lrcRes.isRealSync(), trackDurationMs, lrcRes.hasEnhancedWords());
                 }
 
                 FetchResult textRes = this.fetchYandexTextLyrics(trackId, durationSec > 0L ? durationSec * 1000L : trackDurationMs, fetchId, possibleMismatch);
@@ -1912,8 +1961,11 @@ public class LyricsManager {
                 if (suppResult.has("lyrics") && suppResult.get("lyrics").isJsonObject()) {
                     List<LyricLine> lines;
                     JsonObject lyrObj = suppResult.getAsJsonObject("lyrics");
-                    if (lyrObj.has("syncedLyrics") && lyrObj.get("syncedLyrics").isJsonPrimitive() && !(lines = this.parseLrc(lyrObj.get("syncedLyrics").getAsString())).isEmpty()) {
-                        return new FetchResult(lines, possibleMismatch, true);
+                    if (lyrObj.has("syncedLyrics") && lyrObj.get("syncedLyrics").isJsonPrimitive()) {
+                        String rawSynced = lyrObj.get("syncedLyrics").getAsString();
+                        if (!(lines = this.parseLrc(rawSynced)).isEmpty()) {
+                            return new FetchResult(lines, possibleMismatch, true, trackDurationMs, ENHANCED_TAG_STRIP_PATTERN.matcher(rawSynced).find());
+                        }
                     }
                     if (lyrObj.has("fullLyrics") && lyrObj.get("fullLyrics").isJsonPrimitive()) {
                         long targetDur = durationSec > 0L ? durationSec * 1000L : (trackDurationMs > 0L ? trackDurationMs : 180000L);
@@ -2064,7 +2116,8 @@ public class LyricsManager {
             }
             boolean possibleMismatch = bestScore < 0.75;
             long songId = bestSong.getAsJsonPrimitive("id").getAsLong();
-            String lyricUrl = "https://music.163.com/api/song/lyric?os=pc&id=" + songId + "&lv=-1&kv=-1&tv=-1";
+            long songDurMs = bestSong.has("duration") && bestSong.get("duration").isJsonPrimitive() && bestSong.getAsJsonPrimitive("duration").isNumber() ? bestSong.getAsJsonPrimitive("duration").getAsLong() : 0L;
+            String lyricUrl = "https://music.163.com/api/song/lyric?os=pc&id=" + songId + "&lv=-1&kv=-1&tv=-1&yv=-1";
             String lyricResp = LyricsManager.httpGet(lyricUrl, headers, 2500);
             if (lyricResp == null) {
                 return null;
@@ -2075,8 +2128,29 @@ public class LyricsManager {
             JsonElement lyricEl = JsonParser.parseString((String)lyricResp);
             if (lyricEl != null && lyricEl.isJsonObject()) {
                 JsonObject lyricJson = lyricEl.getAsJsonObject();
-                if (lyricJson.has("lrc") && lyricJson.get("lrc").isJsonObject() && (lrc = lyricJson.getAsJsonObject("lrc")).has("lyric") && lrc.get("lyric").isJsonPrimitive() && !(lines = this.parseLrc(lrc.get("lyric").getAsString())).isEmpty()) {
-                    return new FetchResult(lines, possibleMismatch, true);
+                if (lyricJson.has("yrc") && lyricJson.get("yrc").isJsonObject()) {
+                    JsonObject yrc = lyricJson.getAsJsonObject("yrc");
+                    if (yrc.has("lyric") && yrc.get("lyric").isJsonPrimitive()) {
+                        List<LyricLine> kLines = this.parseNeteaseKaraokeLrc(yrc.get("lyric").getAsString());
+                        if (!kLines.isEmpty()) {
+                            return new FetchResult(kLines, possibleMismatch, true, songDurMs, true);
+                        }
+                    }
+                }
+                if (lyricJson.has("klyric") && lyricJson.get("klyric").isJsonObject()) {
+                    JsonObject klyric = lyricJson.getAsJsonObject("klyric");
+                    if (klyric.has("lyric") && klyric.get("lyric").isJsonPrimitive()) {
+                        List<LyricLine> kLines = this.parseNeteaseKaraokeLrc(klyric.get("lyric").getAsString());
+                        if (!kLines.isEmpty()) {
+                            return new FetchResult(kLines, possibleMismatch, true, songDurMs, true);
+                        }
+                    }
+                }
+                if (lyricJson.has("lrc") && lyricJson.get("lrc").isJsonObject() && (lrc = lyricJson.getAsJsonObject("lrc")).has("lyric") && lrc.get("lyric").isJsonPrimitive()) {
+                    String rawLrc = lrc.get("lyric").getAsString();
+                    if (!(lines = this.parseLrc(rawLrc)).isEmpty()) {
+                        return new FetchResult(lines, possibleMismatch, true, songDurMs, ENHANCED_TAG_STRIP_PATTERN.matcher(rawLrc).find());
+                    }
                 }
             }
         }
@@ -2086,11 +2160,91 @@ public class LyricsManager {
         return null;
     }
 
+    private List<LyricLine> parseNeteaseKaraokeLrc(String krc) {
+        if (krc == null || krc.isBlank()) {
+            return Collections.emptyList();
+        }
+        ArrayList<LyricLine> result = new ArrayList<LyricLine>();
+        String[] rawLines = LINE_SPLIT_PATTERN.split(krc);
+        for (String raw : rawLines) {
+            if (raw == null) continue;
+            String trimmed = raw.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("{")) continue;
+            Matcher lm = NETEASE_KRC_LINE_PATTERN.matcher(trimmed);
+            if (!lm.matches()) continue;
+            long lineStartMs;
+            long lineDurMs;
+            try {
+                lineStartMs = Long.parseLong(lm.group(1));
+                lineDurMs = Long.parseLong(lm.group(2));
+            } catch (Exception ignored) {
+                continue;
+            }
+            String body = lm.group(3);
+            Matcher wm = NETEASE_KRC_WORD_PATTERN.matcher(body);
+            ArrayList<LyricLine.Word> parsedWords = new ArrayList<LyricLine.Word>();
+            StringBuilder lineTextSb = new StringBuilder();
+            long firstWordVal = -1L;
+            Boolean wordsAreAbsolute = null;
+            while (wm.find()) {
+                long wVal1;
+                long wDur;
+                try {
+                    wVal1 = Long.parseLong(wm.group(1));
+                    wDur = Math.max(40L, Long.parseLong(wm.group(2)));
+                } catch (Exception ignored) {
+                    continue;
+                }
+                String seg = wm.group(3);
+                if (seg == null) continue;
+                String cleanSeg = LyricLine.stripFormattingTags(seg);
+                if (wordsAreAbsolute == null) {
+                    firstWordVal = wVal1;
+                    wordsAreAbsolute = firstWordVal >= lineStartMs;
+                }
+                long wStart = Boolean.TRUE.equals(wordsAreAbsolute) ? wVal1 : (lineStartMs + wVal1);
+                long wEnd = wStart + wDur;
+                int charStart = lineTextSb.length();
+                lineTextSb.append(cleanSeg);
+                int charEnd = lineTextSb.length();
+                String trimmedWord = cleanSeg.trim();
+                if (!trimmedWord.isEmpty()) {
+                    int leadSpaces = 0;
+                    while (leadSpaces < cleanSeg.length() && Character.isWhitespace(cleanSeg.charAt(leadSpaces))) {
+                        ++leadSpaces;
+                    }
+                    int wsIdx = charStart + leadSpaces;
+                    int weIdx = Math.max(wsIdx + 1, wsIdx + trimmedWord.length());
+                    parsedWords.add(new LyricLine.Word(wStart, wEnd, trimmedWord, wsIdx, weIdx));
+                }
+            }
+            String plainText = MULTI_SPACE_PATTERN.matcher(lineTextSb.toString()).replaceAll(" ").trim();
+            if (plainText.isEmpty() || parsedWords.isEmpty()) continue;
+            if (INSTRUMENTAL_LINE_PATTERN.matcher(plainText).matches()) continue;
+            long vocalEnd = Math.max(lineStartMs + 100L, parsedWords.get(parsedWords.size() - 1).endMs());
+            long lineEnd = Math.max(vocalEnd + 250L, lineStartMs + Math.max(400L, lineDurMs));
+            result.add(new LyricLine(lineStartMs, lineEnd, vocalEnd, plainText, parsedWords));
+        }
+        if (result.size() > 1) {
+            result.sort(Comparator.comparingLong(l -> l.startMs));
+            for (int i = 0; i < result.size() - 1; ++i) {
+                LyricLine cur = result.get(i);
+                LyricLine nxt = result.get(i + 1);
+                if (cur.endMs > nxt.startMs) {
+                    long clampedEnd = Math.max(cur.startMs + 60L, nxt.startMs);
+                    long clampedVocal = Math.min(clampedEnd, Math.max(cur.startMs + 50L, cur.vocalEndMs));
+                    result.set(i, new LyricLine(cur.startMs, clampedEnd, clampedVocal, cur.rawText != null ? cur.rawText : cur.text, cur.words));
+                }
+            }
+        }
+        return result;
+    }
+
     private LyricsConsensusEngine.Candidate wrapSyncedResult(String provider, FetchResult res) {
         if (res == null || res.lines() == null || res.lines().isEmpty()) {
             return null;
         }
-        LyricsConsensusEngine.Candidate c = new LyricsConsensusEngine.Candidate(provider, res.lines(), null, res.isRealSync());
+        LyricsConsensusEngine.Candidate c = new LyricsConsensusEngine.Candidate(provider, res.lines(), null, res.isRealSync(), res.sourceDurationMs(), res.hasEnhancedWords());
         c.possibleMismatch = res.possibleMismatch();
         return c;
     }
@@ -2121,11 +2275,15 @@ public class LyricsManager {
             StringBuilder urlBuilder = new StringBuilder("https://lrclib.net/api/get?");
             urlBuilder.append("track_name=").append(URLEncoder.encode(trackName, StandardCharsets.UTF_8));
             urlBuilder.append("&artist_name=").append(URLEncoder.encode(artistName, StandardCharsets.UTF_8));
+            String baseGetUrl = urlBuilder.toString();
             if (durationSec > 0L) {
                 urlBuilder.append("&duration=").append(durationSec);
             }
             Map<String, String> headers = Map.of("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
             String resp = LyricsManager.httpGet(urlBuilder.toString(), headers, 4500);
+            if (resp == null && durationSec > 0L && fetchId == this.currentFetchId.get()) {
+                resp = LyricsManager.httpGet(baseGetUrl, headers, 3500);
+            }
             if (resp == null || fetchId != this.currentFetchId.get()) {
                 return null;
             }
@@ -2134,11 +2292,18 @@ public class LyricsManager {
                 return null;
             }
             JsonObject obj = el.getAsJsonObject();
-            if (obj.has("syncedLyrics") && obj.get("syncedLyrics").isJsonPrimitive() && !(lines = this.parseLrc(obj.get("syncedLyrics").getAsString())).isEmpty()) {
-                return new LyricsConsensusEngine.Candidate("LRCLIB_GET", lines, null, true);
+            long srcDurMs = obj.has("duration") && obj.get("duration").isJsonPrimitive() && obj.getAsJsonPrimitive("duration").isNumber()
+                ? Math.round(obj.getAsJsonPrimitive("duration").getAsDouble() * 1000.0)
+                : 0L;
+            if (obj.has("syncedLyrics") && obj.get("syncedLyrics").isJsonPrimitive()) {
+                String rawSynced = obj.get("syncedLyrics").getAsString();
+                if (!(lines = this.parseLrc(rawSynced)).isEmpty()) {
+                    boolean enhanced = ENHANCED_TAG_STRIP_PATTERN.matcher(rawSynced).find();
+                    return new LyricsConsensusEngine.Candidate("LRCLIB_GET", lines, null, true, srcDurMs, enhanced);
+                }
             }
             if (obj.has("plainLyrics") && obj.get("plainLyrics").isJsonPrimitive() && !(plain = obj.get("plainLyrics").getAsString()).isBlank()) {
-                return new LyricsConsensusEngine.Candidate("LRCLIB_PLAIN", null, plain, false);
+                return new LyricsConsensusEngine.Candidate("LRCLIB_PLAIN", null, plain, false, srcDurMs, false);
             }
         }
         catch (Exception exception) {
@@ -2311,18 +2476,33 @@ public class LyricsManager {
             if (arr.isEmpty()) {
                 return null;
             }
-            JsonObject bestSyncedObj = null;
-            int bestSyncedScore = 40;
+            ArrayList<JsonObject> scoredObjs = new ArrayList<JsonObject>();
+            ArrayList<Integer> scores = new ArrayList<Integer>();
             for (JsonElement elem : arr) {
                 int score;
                 JsonObject obj;
-                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("syncedLyrics") || !obj.get("syncedLyrics").isJsonPrimitive() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= bestSyncedScore) continue;
-                bestSyncedScore = score;
-                bestSyncedObj = obj;
+                if (!elem.isJsonObject() || !(obj = elem.getAsJsonObject()).has("syncedLyrics") || !obj.get("syncedLyrics").isJsonPrimitive() || (score = this.calculateMatchScore(obj, durationSec, targetTitle, targetArtist)) <= 40) continue;
+                int insertAt = scores.size();
+                for (int k = 0; k < scores.size(); ++k) {
+                    if (score > scores.get(k)) {
+                        insertAt = k;
+                        break;
+                    }
+                }
+                scores.add(insertAt, score);
+                scoredObjs.add(insertAt, obj);
             }
-            if (bestSyncedObj != null && !(lines = this.parseLrc(bestSyncedObj.get("syncedLyrics").getAsString())).isEmpty()) {
-                boolean possibleMismatch = bestSyncedScore < 250;
-                return new FetchResult(lines, possibleMismatch, true);
+            for (int k = 0; k < scoredObjs.size(); ++k) {
+                JsonObject candObj = scoredObjs.get(k);
+                int candScore = scores.get(k);
+                String rawSynced = candObj.get("syncedLyrics").getAsString();
+                if ((lines = this.parseLrc(rawSynced)).isEmpty()) continue;
+                long srcDurMs = candObj.has("duration") && candObj.get("duration").isJsonPrimitive() && candObj.getAsJsonPrimitive("duration").isNumber()
+                    ? Math.round(candObj.getAsJsonPrimitive("duration").getAsDouble() * 1000.0)
+                    : 0L;
+                boolean enhanced = ENHANCED_TAG_STRIP_PATTERN.matcher(rawSynced).find();
+                boolean possibleMismatch = candScore < 250;
+                return new FetchResult(lines, possibleMismatch, true, srcDurMs, enhanced);
             }
         }
         catch (Exception exception) {
@@ -3037,9 +3217,17 @@ public class LyricsManager {
         return s;
     }
 
-    public record FetchResult(List<LyricLine> lines, boolean possibleMismatch, boolean isRealSync) {
+    public record FetchResult(List<LyricLine> lines, boolean possibleMismatch, boolean isRealSync, long sourceDurationMs, boolean hasEnhancedWords) {
         public FetchResult(List<LyricLine> lines, boolean possibleMismatch) {
-            this(lines, possibleMismatch, false);
+            this(lines, possibleMismatch, false, 0L, false);
+        }
+
+        public FetchResult(List<LyricLine> lines, boolean possibleMismatch, boolean isRealSync) {
+            this(lines, possibleMismatch, isRealSync, 0L, false);
+        }
+
+        public FetchResult(List<LyricLine> lines, boolean possibleMismatch, boolean isRealSync, long sourceDurationMs) {
+            this(lines, possibleMismatch, isRealSync, sourceDurationMs, false);
         }
     }
 

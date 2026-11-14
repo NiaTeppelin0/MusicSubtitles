@@ -92,6 +92,9 @@ public class LyricsConsensusEngine {
             if (c.isSynced) {
                 c.score += 150.0;
             }
+            if (c.hasEnhancedWords) {
+                c.score += 65.0;
+            }
             if ("YANDEX_SYNCED".equalsIgnoreCase(c.provider)) {
                 c.score += 130.0;
             } else if ("GENIUS".equalsIgnoreCase(c.provider)) {
@@ -103,7 +106,7 @@ public class LyricsConsensusEngine {
             } else if ("LRCLIB_PLAIN".equalsIgnoreCase(c.provider)) {
                 c.score += 40.0;
             } else if ("NETEASE".equalsIgnoreCase(c.provider)) {
-                c.score += 10.0;
+                c.score += c.isSynced ? 85.0 : 20.0;
             } else if ("OVH".equalsIgnoreCase(c.provider)) {
                 c.score += 20.0;
             }
@@ -175,20 +178,32 @@ public class LyricsConsensusEngine {
 
         if (l > 20L) {
             for (Candidate candidate3 : arrayList) {
+                long candDurMs = candidate3.sourceDurationMs;
+                if (candDurMs > 20000L) {
+                    long durDiffSec = Math.abs(candDurMs / 1000L - l);
+                    if (durDiffSec <= 2L) {
+                        candidate3.score += 120.0;
+                    } else if (durDiffSec <= 5L) {
+                        candidate3.score += 60.0;
+                    }
+                }
                 if (!candidate3.isSynced || candidate3.lines.isEmpty()) continue;
                 long l2 = candidate3.lines.get(0).startMs;
                 long l3 = candidate3.lines.get(candidate3.lines.size() - 1).endMs;
                 long l4 = l * 1000L;
-                if (l3 > l4 + 12000L) {
-                    candidate3.score -= 600.0;
-                    candidate3.possibleMismatch = true;
-                } else if ((double)l3 < (double)l4 * 0.45 && l4 > 50000L) {
-                    candidate3.score -= 500.0;
-                    candidate3.possibleMismatch = true;
-                }
-                if ((double)l2 > (double)l4 * 0.50 && l4 > 40000L) {
-                    candidate3.score -= 500.0;
-                    candidate3.possibleMismatch = true;
+                long effectiveSourceMs = candDurMs > 20000L ? candDurMs : l3;
+                if (!LyricsConsensusEngine.isTempoCompatibleDuration(effectiveSourceMs, l4)) {
+                    if (l3 > l4 + 12000L) {
+                        candidate3.score -= 600.0;
+                        candidate3.possibleMismatch = true;
+                    } else if ((double)l3 < (double)l4 * 0.45 && l4 > 50000L) {
+                        candidate3.score -= 500.0;
+                        candidate3.possibleMismatch = true;
+                    }
+                    if ((double)l2 > (double)l4 * 0.50 && l4 > 40000L) {
+                        candidate3.score -= 500.0;
+                        candidate3.possibleMismatch = true;
+                    }
                 }
             }
         }
@@ -229,7 +244,136 @@ public class LyricsConsensusEngine {
         if (!candidate6.hasCrossConsensus && arrayList.size() > 1 && !candidate6.isSynced && candidate6.score < 200.0) {
             candidate6.possibleMismatch = true;
         }
+        if (candidate6.isSynced && !candidate6.lines.isEmpty()) {
+            candidate6.lines = LyricsConsensusEngine.fuseSyncedLines(candidate6, arrayList);
+        }
         return candidate6;
+    }
+
+    private static boolean isTempoCompatibleDuration(long candidateMs, long trackMs) {
+        if (candidateMs <= 20000L || trackMs <= 20000L) {
+            return false;
+        }
+        double ratio = (double)trackMs / (double)candidateMs;
+        return (ratio >= 0.65 && ratio <= 0.93) || (ratio >= 1.07 && ratio <= 1.55);
+    }
+
+    public static List<LyricLine> fuseSyncedLines(Candidate winner, List<Candidate> pool) {
+        if (winner == null || !winner.isSynced || winner.lines == null || winner.lines.isEmpty() || pool == null || pool.size() <= 1) {
+            return winner != null ? winner.lines : Collections.emptyList();
+        }
+        long winnerLastEnd = winner.lines.get(winner.lines.size() - 1).endMs;
+        List<Candidate> peers = new ArrayList<Candidate>();
+        for (Candidate peer : pool) {
+            if (peer == null || peer == winner || !peer.isSynced || peer.possibleMismatch || peer.lines == null || peer.lines.isEmpty()) continue;
+            if (LyricsConsensusEngine.computePhraseOverlap(winner.phrases, peer.phrases) < 0.60) continue;
+            long peerLastEnd = peer.lines.get(peer.lines.size() - 1).endMs;
+            if (Math.abs(winnerLastEnd - peerLastEnd) > 4500L) continue;
+            peers.add(peer);
+        }
+        if (peers.isEmpty()) {
+            return winner.lines;
+        }
+        ArrayList<LyricLine> fused = new ArrayList<LyricLine>(winner.lines.size());
+        long minStart = 0L;
+        for (LyricLine wLine : winner.lines) {
+            if (wLine == null) continue;
+            String normW = LyricsConsensusEngine.normalize(wLine.text);
+            LyricLine bestPeerLine = null;
+            boolean peerHasWords = false;
+            double bestSim = 0.819;
+            long bestTimeDist = Long.MAX_VALUE;
+            for (Candidate peer : peers) {
+                for (LyricLine pLine : peer.lines) {
+                    if (pLine == null) continue;
+                    long timeDist = Math.abs(wLine.startMs - pLine.startMs);
+                    if (timeDist > 650L) continue;
+                    double sim = LyricsConsensusEngine.computeNormalizedLineSimilarity(normW, LyricsConsensusEngine.normalize(pLine.text));
+                    if (sim >= 0.82 && (sim > bestSim + 0.01 || (Math.abs(sim - bestSim) <= 0.01 && timeDist < bestTimeDist))) {
+                        bestSim = sim;
+                        bestTimeDist = timeDist;
+                        bestPeerLine = pLine;
+                        peerHasWords = peer.hasEnhancedWords;
+                    }
+                }
+            }
+            if (bestPeerLine != null) {
+                long fusedStart = Math.max(minStart, Math.round((double)wLine.startMs * 0.65 + (double)bestPeerLine.startMs * 0.35));
+                long deltaFromWinner = fusedStart - wLine.startMs;
+                long dur = Math.max(60L, wLine.endMs - wLine.startMs);
+                long vocalDur = Math.max(50L, wLine.vocalEndMs - wLine.startMs);
+                long fusedEnd = fusedStart + dur;
+                long fusedVocalEnd = Math.min(fusedEnd, fusedStart + vocalDur);
+                List<LyricLine.Word> fusedWords = null;
+                String lineText = wLine.rawText != null && !wLine.rawText.isEmpty() ? wLine.rawText : wLine.text;
+                if (!winner.hasEnhancedWords && peerHasWords && bestPeerLine.words != null && !bestPeerLine.words.isEmpty() && normW.equals(LyricsConsensusEngine.normalize(bestPeerLine.text))) {
+                    long wordDelta = fusedStart - bestPeerLine.startMs;
+                    ArrayList<LyricLine.Word> shifted = new ArrayList<LyricLine.Word>(bestPeerLine.words.size());
+                    for (LyricLine.Word pw : bestPeerLine.words) {
+                        long ws = Math.max(0L, pw.startMs() + wordDelta);
+                        long we = Math.max(ws + 40L, pw.endMs() + wordDelta);
+                        shifted.add(new LyricLine.Word(ws, we, pw.text(), pw.charStart(), pw.charEnd()));
+                    }
+                    fusedWords = shifted;
+                    long lastWordEnd = shifted.get(shifted.size() - 1).endMs();
+                    fusedVocalEnd = Math.max(fusedStart + 50L, lastWordEnd);
+                    fusedEnd = Math.max(fusedEnd, fusedVocalEnd);
+                } else if (wLine.words != null && !wLine.words.isEmpty()) {
+                    ArrayList<LyricLine.Word> shifted = new ArrayList<LyricLine.Word>(wLine.words.size());
+                    for (LyricLine.Word ww : wLine.words) {
+                        long ws = Math.max(0L, ww.startMs() + deltaFromWinner);
+                        long we = Math.max(ws + 40L, ww.endMs() + deltaFromWinner);
+                        shifted.add(new LyricLine.Word(ws, we, ww.text(), ww.charStart(), ww.charEnd()));
+                    }
+                    fusedWords = shifted;
+                }
+                fused.add(new LyricLine(fusedStart, fusedEnd, fusedVocalEnd, lineText, fusedWords));
+                minStart = fusedStart;
+            } else {
+                long safeStart = Math.max(minStart, wLine.startMs);
+                if (safeStart == wLine.startMs) {
+                    fused.add(wLine);
+                } else {
+                    long delta = safeStart - wLine.startMs;
+                    ArrayList<LyricLine.Word> shifted = null;
+                    if (wLine.words != null && !wLine.words.isEmpty()) {
+                        shifted = new ArrayList<LyricLine.Word>(wLine.words.size());
+                        for (LyricLine.Word ww : wLine.words) {
+                            long ws = Math.max(0L, ww.startMs() + delta);
+                            long we = Math.max(ws + 40L, ww.endMs() + delta);
+                            shifted.add(new LyricLine.Word(ws, we, ww.text(), ww.charStart(), ww.charEnd()));
+                        }
+                    }
+                    fused.add(new LyricLine(safeStart, wLine.endMs + delta, wLine.vocalEndMs + delta, wLine.rawText != null ? wLine.rawText : wLine.text, shifted));
+                }
+                minStart = safeStart;
+            }
+        }
+        return fused;
+    }
+
+    private static double computeNormalizedLineSimilarity(String normA, String normB) {
+        if (normA == null || normB == null || normA.isEmpty() || normB.isEmpty()) {
+            return 0.0;
+        }
+        if (normA.equals(normB)) {
+            return 1.0;
+        }
+        String[] wordsA = WHITESPACE_PATTERN.split(normA);
+        String[] wordsB = WHITESPACE_PATTERN.split(normB);
+        HashSet<String> setA = new HashSet<String>(Arrays.asList(wordsA));
+        HashSet<String> setB = new HashSet<String>(Arrays.asList(wordsB));
+        int minSize = Math.min(setA.size(), setB.size());
+        if (minSize == 0) {
+            return 0.0;
+        }
+        int inter = 0;
+        for (String w : setA) {
+            if (setB.contains(w)) {
+                ++inter;
+            }
+        }
+        return (double)inter / (double)Math.max(setA.size(), setB.size());
     }
 
     private static String baseProviderFamily(String provider) {
@@ -324,19 +468,27 @@ public class LyricsConsensusEngine {
 
     public static class Candidate {
         public final String provider;
-        public final List<LyricLine> lines;
+        public List<LyricLine> lines;
         public final String rawText;
         public final boolean isSynced;
         public final Set<String> phrases;
+        public long sourceDurationMs = 0L;
+        public boolean hasEnhancedWords = false;
         public double score = 0.0;
         public boolean hasCrossConsensus = false;
         public boolean possibleMismatch = false;
 
         public Candidate(String string, List<LyricLine> list, String string2, boolean bl) {
+            this(string, list, string2, bl, 0L, false);
+        }
+
+        public Candidate(String string, List<LyricLine> list, String string2, boolean bl, long sourceDurationMs, boolean hasEnhancedWords) {
             this.provider = string != null ? string : "UNKNOWN";
             this.lines = list != null ? list : Collections.emptyList();
             this.rawText = string2 != null ? string2 : "";
             this.isSynced = bl;
+            this.sourceDurationMs = Math.max(0L, sourceDurationMs);
+            this.hasEnhancedWords = hasEnhancedWords;
             this.phrases = LyricsConsensusEngine.extractPhrases(this.lines, this.rawText);
         }
     }
