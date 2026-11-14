@@ -107,6 +107,10 @@ public class LyricsConsensusEngine {
                 c.score += 40.0;
             } else if ("NETEASE".equalsIgnoreCase(c.provider)) {
                 c.score += c.isSynced ? 85.0 : 20.0;
+            } else if ("KUGOU".equalsIgnoreCase(c.provider)) {
+                c.score += c.isSynced ? 90.0 : 20.0;
+            } else if ("QQMUSIC".equalsIgnoreCase(c.provider)) {
+                c.score += c.isSynced ? 80.0 : 20.0;
             } else if ("OVH".equalsIgnoreCase(c.provider)) {
                 c.score += 20.0;
             }

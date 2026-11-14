@@ -44,18 +44,41 @@
         if (!vid || vid === transcriptSentForVideo || syncInFlight) return;
 
         const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-        if (!player || typeof player.getOption !== 'function') return;
 
         syncInFlight = true;
         try {
-            const tracklist = player.getOption('captions', 'tracklist');
+            let tracklist = player && typeof player.getOption === 'function' ? player.getOption('captions', 'tracklist') : null;
+            if ((!tracklist || tracklist.length === 0) && player && typeof player.loadModule === 'function') {
+                try {
+                    player.loadModule('captions');
+                } catch {}
+                tracklist = typeof player.getOption === 'function' ? player.getOption('captions', 'tracklist') : null;
+            }
+            if (!tracklist || tracklist.length === 0) {
+                const playerResp = player && typeof player.getPlayerResponse === 'function' ? player.getPlayerResponse() : null;
+                if (playerResp && (!playerResp.videoDetails || playerResp.videoDetails.videoId === vid)) {
+                    tracklist = playerResp.captions && playerResp.captions.playerCaptionsTracklistRenderer ? playerResp.captions.playerCaptionsTracklistRenderer.captionTracks : null;
+                }
+            }
+            if (!tracklist || tracklist.length === 0) {
+                const initResp = window.ytInitialPlayerResponse;
+                if (initResp && initResp.videoDetails && initResp.videoDetails.videoId === vid) {
+                    tracklist = initResp.captions && initResp.captions.playerCaptionsTracklistRenderer ? initResp.captions.playerCaptionsTracklistRenderer.captionTracks : null;
+                }
+            }
             if (!tracklist || tracklist.length === 0) return;
 
-            let bestTrack = tracklist.find(t => t.languageCode === 'ru' && !t.is_generated);
-            if (!bestTrack) bestTrack = tracklist.find(t => t.languageCode === 'ru');
-            if (!bestTrack) bestTrack = tracklist.find(t => t.languageCode === 'en' && !t.is_generated);
-            if (!bestTrack) bestTrack = tracklist.find(t => t.languageCode === 'en');
-            if (!bestTrack) bestTrack = tracklist[0];
+            const normalizedTracks = tracklist.map(t => ({
+                baseUrl: t.baseUrl,
+                languageCode: (t.languageCode || t.language_code || '').toLowerCase(),
+                is_generated: Boolean(t.is_generated || t.kind === 'asr')
+            }));
+
+            let bestTrack = normalizedTracks.find(t => t.languageCode === 'ru' && !t.is_generated);
+            if (!bestTrack) bestTrack = normalizedTracks.find(t => t.languageCode === 'ru');
+            if (!bestTrack) bestTrack = normalizedTracks.find(t => t.languageCode === 'en' && !t.is_generated);
+            if (!bestTrack) bestTrack = normalizedTracks.find(t => t.languageCode === 'en');
+            if (!bestTrack) bestTrack = normalizedTracks.find(t => !t.is_generated) || normalizedTracks[0];
 
             if (!bestTrack || !bestTrack.baseUrl) return;
 
@@ -79,10 +102,51 @@
                 if (!ev.segs || ev.segs.length === 0) continue;
                 const startMs = ev.tStartMs || 0;
                 const durMs = ev.dDurationMs || 3500;
-                let text = ev.segs.map(s => s.utf8 || '').join('').trim();
-                text = text.replace(/\n+/g, ' ').trim();
+                const lineWords = [];
+                const textParts = [];
+                let cursorLen = 0;
+
+                for (let sIdx = 0; sIdx < ev.segs.length; sIdx++) {
+                    const seg = ev.segs[sIdx];
+                    const cleanSeg = (seg.utf8 || '').replace(/\n+/g, ' ').trim();
+                    if (!cleanSeg) continue;
+                    const segStart = startMs + (seg.tOffsetMs || 0);
+                    let segEnd = startMs + durMs;
+                    for (let nIdx = sIdx + 1; nIdx < ev.segs.length; nIdx++) {
+                        if (typeof ev.segs[nIdx].tOffsetMs === 'number' && (ev.segs[nIdx].utf8 || '').trim()) {
+                            segEnd = Math.max(segStart + 80, startMs + ev.segs[nIdx].tOffsetMs);
+                            break;
+                        }
+                    }
+                    const tokens = cleanSeg.split(/\s+/).filter(Boolean);
+                    const totalChars = tokens.reduce((acc, tk) => acc + tk.length, 0) || 1;
+                    let tCur = segStart;
+                    const segSpan = Math.max(80, segEnd - segStart);
+                    for (let tIdx = 0; tIdx < tokens.length; tIdx++) {
+                        const tok = tokens[tIdx];
+                        const tokDur = tIdx === tokens.length - 1 ? Math.max(40, segStart + segSpan - tCur) : Math.max(40, Math.round(segSpan * tok.length / totalChars));
+                        if (textParts.length > 0) {
+                            cursorLen += 1;
+                        }
+                        const charStart = cursorLen;
+                        textParts.push(tok);
+                        cursorLen += tok.length;
+                        lineWords.push({
+                            startMs: tCur,
+                            endMs: Math.min(startMs + durMs, tCur + tokDur),
+                            text: tok,
+                            charStart: charStart,
+                            charEnd: cursorLen
+                        });
+                        tCur += tokDur;
+                    }
+                }
+
+                const text = textParts.join(' ').trim();
                 if (text && text !== '\n') {
-                    lines.push({ startMs: startMs, endMs: startMs + durMs, text: text });
+                    lines.push(lineWords.length > 0
+                        ? { startMs: startMs, endMs: startMs + durMs, text: text, words: lineWords }
+                        : { startMs: startMs, endMs: startMs + durMs, text: text });
                 }
             }
 

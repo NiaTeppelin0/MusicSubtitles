@@ -11,6 +11,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -48,6 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.Inflater;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.class_124;
 import net.minecraft.class_1297;
@@ -104,6 +106,8 @@ public class LyricsManager {
     private final Set<String> userSavedTracks = Collections.newSetFromMap(new ConcurrentHashMap());
     private final Set<String> checkedMismatchTracks = Collections.newSetFromMap(new ConcurrentHashMap());
     private final Set<String> realSyncedTracks = Collections.newSetFromMap(new ConcurrentHashMap());
+    private final Set<String> onTheFlyTracks = Collections.newSetFromMap(new ConcurrentHashMap());
+    private final LiveAudioSubtitleGenerator liveAudioGenerator = new LiveAudioSubtitleGenerator(this);
     private final AtomicInteger acousticMismatchStrikes = new AtomicInteger(0);
     private volatile long lastAcousticCheckTime = 0L;
     private volatile boolean isAcousticChecking = false;
@@ -121,10 +125,11 @@ public class LyricsManager {
     private static final Pattern LINE_SPLIT_PATTERN = Pattern.compile("\\r?\\n");
     private static final Pattern NON_ALNUM_PATTERN = Pattern.compile("[^\\p{L}\\p{N}\\s]");
     private static final Pattern INSTRUMENTAL_LINE_PATTERN = Pattern.compile("(?i)^\\[?(?:instrumental|\u0441\u043e\u043b\u043e|guitar\\s*solo|\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0430\u043b|\u043c\u0443\u0437\u044b\u043a\u0430|intro|outro|solo)\\]?$");
+    private static final Pattern CREDIT_META_LINE_PATTERN = Pattern.compile("(?iu)^(?:lyrics|composed|arranged|produced|vocals?|written|mix(?:ed)?|master(?:ed)?|\u0441\u043b\u043e\u0432\u0430|\u043c\u0443\u0437\u044b\u043a\u0430|\u0430\u0432\u0442\u043e\u0440|\u4f5c\u8bcd|\u4f5c\u66f2|\u7f16\u66f2|\u5236\u4f5c\u4eba|\u6f14\u5531)\\s*(?:by|:|\uff1a).*$");
     private static final Pattern INVALID_FILENAME_PATTERN = Pattern.compile("[\\\\/:*?\"<>|]");
     private static final Pattern ENHANCED_TAG_STRIP_PATTERN = Pattern.compile("<\\d+:\\d+(?:[.,]\\d+)?>");
     private static final Pattern NETEASE_KRC_LINE_PATTERN = Pattern.compile("^\\[(\\d+),(\\d+)\\](.+)$");
-    private static final Pattern NETEASE_KRC_WORD_PATTERN = Pattern.compile("\\((\\d+),(\\d+)(?:,\\d+)?\\)([^\\(]+)");
+    private static final Pattern NETEASE_KRC_WORD_PATTERN = Pattern.compile("(?:\\(|<)(\\d+),(\\d+)(?:,\\d+)?(?:\\)|>)([^\\(<]+)");
     private static final Pattern LRC_TAG_STRIP_PATTERN = Pattern.compile("\\[(\\d+):(\\d+(?:[.,]\\d+)?)\\]");
     private static final Pattern NOISE_QUOTES_PATTERN = Pattern.compile("[\u25ba\u25c4\"'\u00ab\u00bb\u201c\u201d\u201e]");
     private static final Pattern CARMELL_PATTERN = Pattern.compile("(?i)carmell\\s*dansen");
@@ -172,6 +177,8 @@ public class LyricsManager {
     public void reloadCurrentTrack() {
         this.lyricsCache.clear();
         this.realSyncedTracks.clear();
+        this.onTheFlyTracks.clear();
+        this.liveAudioGenerator.resetForTrack("");
         this.promptedMismatchTracks.clear();
         this.checkedMismatchTracks.clear();
         this.autoShutoffTracks.clear();
@@ -244,6 +251,10 @@ public class LyricsManager {
 
     public String getCurrentTrackKey() {
         return this.currentTrackKey;
+    }
+
+    ExecutorService getExecutor() {
+        return this.executor;
     }
 
     public List<LyricLine> getLyricsForTrack(TrackState state) {
@@ -347,6 +358,8 @@ public class LyricsManager {
         this.lastKnownState = state;
         String trackKey = this.getTrackKey(state);
         if (!trackKey.equals(this.currentTrackKey)) {
+            this.onTheFlyTracks.remove(this.currentTrackKey);
+            this.liveAudioGenerator.resetForTrack(trackKey);
             this.currentTrackKey = trackKey;
             this.lastFetchedDurationMs = state.durationMs();
             this.lastSpawnedLine = null;
@@ -420,6 +433,9 @@ public class LyricsManager {
             this.lastSpawnedSprintChunk = null;
         }
         if (lines == null || lines.isEmpty()) {
+            if (state.isPlaying() && (this.onTheFlyTracks.contains(trackKey) || this.failedFetchTimes.containsKey(trackKey)) && !trackKey.equals(this.activeFetchTrackKey)) {
+                this.liveAudioGenerator.tickIfNeeded(state, trackKey);
+            }
             return;
         }
         this.triggerLiveAcousticSupervisorIfNeeded(state, lines);
@@ -1042,6 +1058,7 @@ public class LyricsManager {
                     if (result.isRealSync()) {
                         this.realSyncedTracks.add(key);
                     }
+                    this.onTheFlyTracks.remove(key);
                     this.failedFetchTimes.remove(key);
                     if (mismatch) {
                         this.mismatchedTracks.add(key);
@@ -1052,6 +1069,7 @@ public class LyricsManager {
                     }
                 } else {
                     this.failedFetchTimes.put(key, System.currentTimeMillis());
+                    this.onTheFlyTracks.add(key);
                     this.lyricsCache.remove(key);
                     this.realSyncedTracks.remove(key);
                 }
@@ -1164,26 +1182,51 @@ public class LyricsManager {
         if (videoTitle != null && !videoTitle.isEmpty()) {
             this.lyricsCache.put(videoTitle, lines);
             this.realSyncedTracks.add(videoTitle);
+            this.onTheFlyTracks.remove(videoTitle);
             String cleaned = this.cleanForSearch(videoTitle);
             if (!cleaned.isEmpty()) {
                 this.lyricsCache.put(cleaned, lines);
                 this.realSyncedTracks.add(cleaned);
+                this.onTheFlyTracks.remove(cleaned);
             }
             com.example.yandexmusichud.network.TrackMetadataSanitizer.SanitizedMetadata meta = com.example.yandexmusichud.network.TrackMetadataSanitizer.sanitize(videoTitle, "", "");
             if (meta.searchTitle() != null && !meta.searchTitle().isEmpty()) {
                 this.lyricsCache.put(meta.searchTitle(), lines);
                 this.realSyncedTracks.add(meta.searchTitle());
+                this.onTheFlyTracks.remove(meta.searchTitle());
             }
             if (meta.cleanTitle() != null && !meta.cleanTitle().isEmpty()) {
                 this.lyricsCache.put(meta.cleanTitle(), lines);
                 this.realSyncedTracks.add(meta.cleanTitle());
+                this.onTheFlyTracks.remove(meta.cleanTitle());
             }
         }
         if (this.currentTrackKey != null && !this.currentTrackKey.isEmpty()) {
             this.lyricsCache.put(this.currentTrackKey, lines);
             this.realSyncedTracks.add(this.currentTrackKey);
+            this.onTheFlyTracks.remove(this.currentTrackKey);
         }
         System.out.println("[MusicSubtitles] Received live transcript with " + lines.size() + " lines for: " + videoTitle);
+    }
+
+    public void appendGeneratedLiveLine(String trackKey, LyricLine line) {
+        if (line == null || line.text == null || line.text.isBlank()) {
+            return;
+        }
+        if (trackKey == null || !trackKey.equals(this.currentTrackKey) || this.realSyncedTracks.contains(trackKey) || this.disabledTracks.contains(trackKey)) {
+            return;
+        }
+        long dur = Math.max(1200L, line.endMs - line.startMs);
+        List<LyricLine.Word> relWords = null;
+        if (line.words != null && !line.words.isEmpty()) {
+            relWords = new ArrayList<LyricLine.Word>(line.words.size());
+            for (LyricLine.Word w : line.words) {
+                long ws = Math.max(0L, w.startMs() - line.startMs);
+                long we = Math.max(ws + 80L, w.endMs() - line.startMs);
+                relWords.add(new LyricLine.Word(ws, we, w.text(), w.charStart(), w.charEnd()));
+            }
+        }
+        this.pushLiveCaptionWithWords(line.text, dur, relWords);
     }
 
     public long getLiveAcousticOffsetMs() {
@@ -1325,7 +1368,7 @@ public class LyricsManager {
         }, this.executor);
     }
 
-    private int resolveHelperPort() {
+    int resolveHelperPort() {
         if (HudConfig.INSTANCE.helperPort > 0) {
             return HudConfig.INSTANCE.helperPort;
         }
@@ -1383,6 +1426,8 @@ public class LyricsManager {
         String targetArtist = !meta.searchArtist().isEmpty() ? meta.searchArtist() : this.cleanForSearch(rawArtist);
         String normTitle = this.normalizeTrackTitle(targetTitle);
         String primaryArtist = !meta.primaryArtist().isEmpty() ? meta.primaryArtist() : this.extractPrimaryArtist(targetArtist);
+        String translitTitle = LyricsManager.transliterateRuEn(targetTitle);
+        String translitArtist = LyricsManager.transliterateRuEn(targetArtist);
         if (meta.isSpeedUp()) isSpeedUp = true;
         if (meta.isSlowed()) isSlowed = true;
         final boolean finalSpeedUp = isSpeedUp;
@@ -1406,6 +1451,12 @@ public class LyricsManager {
             if (r == null && targetArtist.isEmpty() && !normTitle.isEmpty()) {
                 r = this.wrapSyncedResult("YANDEX_SYNCED", this.queryYandexMusic(normTitle, "", queryDurationSec, fetchId));
             }
+            if (r == null && !translitTitle.isEmpty() && (!translitTitle.equalsIgnoreCase(targetTitle) || !translitArtist.equalsIgnoreCase(targetArtist))) {
+                r = this.wrapSyncedResult("YANDEX_SYNCED", this.queryYandexMusic(translitTitle, translitArtist, queryDurationSec, fetchId));
+            }
+            if (r == null && !targetArtist.isEmpty() && !targetTitle.isEmpty()) {
+                r = this.wrapSyncedResult("YANDEX_SYNCED", this.queryYandexMusic(targetTitle, "", queryDurationSec, fetchId));
+            }
             return r;
         }, this.executor));
         futures.add(CompletableFuture.supplyAsync(() -> {
@@ -1415,6 +1466,9 @@ public class LyricsManager {
             LyricsConsensusEngine.Candidate r = this.queryGeniusLyrics(targetTitle, targetArtist, fetchId);
             if (r == null && !primaryArtist.isEmpty() && !primaryArtist.equals(targetArtist)) {
                 r = this.queryGeniusLyrics(targetTitle, primaryArtist, fetchId);
+            }
+            if (r == null && !targetArtist.isEmpty() && !targetTitle.isEmpty()) {
+                r = this.queryGeniusLyrics(targetTitle, "", fetchId);
             }
             return r;
         }, this.executor));
@@ -1447,6 +1501,10 @@ public class LyricsManager {
             if (r == null && !normTitle.isEmpty() && !normTitle.equalsIgnoreCase(targetTitle)) {
                 r = this.wrapSyncedResult("LRCLIB_SYNCED", this.queryLrclibSearchSynced(normTitle, queryDurationSec, normTitle, targetArtist, fetchId));
             }
+            if (r == null && !translitTitle.isEmpty() && !translitTitle.equalsIgnoreCase(targetTitle)) {
+                String tQuery = !translitArtist.isEmpty() ? translitArtist + " " + translitTitle : translitTitle;
+                r = this.wrapSyncedResult("LRCLIB_SYNCED", this.queryLrclibSearchSynced(tQuery, queryDurationSec, translitTitle, translitArtist, fetchId));
+            }
             return r;
         }, this.executor));
         futures.add(CompletableFuture.supplyAsync(() -> {
@@ -1459,9 +1517,46 @@ public class LyricsManager {
                 if (r == null && !primaryArtist.isEmpty() && !primaryArtist.equals(targetArtist)) {
                     r = this.wrapSyncedResult("NETEASE", this.queryNeteaseLyrics(primaryArtist + " " + targetTitle, targetTitle, primaryArtist, queryDurationSec, fetchId));
                 }
+                if (r == null) {
+                    r = this.wrapSyncedResult("NETEASE", this.queryNeteaseLyrics(targetTitle, targetTitle, "", queryDurationSec, fetchId));
+                }
             }
             if (r == null && !targetTitle.isEmpty() && targetArtist.isEmpty()) {
                 r = this.wrapSyncedResult("NETEASE", this.queryNeteaseLyrics(targetTitle, targetTitle, "", queryDurationSec, fetchId));
+            }
+            return r;
+        }, this.executor));
+        futures.add(CompletableFuture.supplyAsync(() -> {
+            if (fetchId != this.currentFetchId.get()) {
+                return null;
+            }
+            LyricsConsensusEngine.Candidate r = null;
+            if (!targetTitle.isEmpty()) {
+                String q = !targetArtist.isEmpty() ? targetArtist + " " + targetTitle : targetTitle;
+                r = this.wrapSyncedResult("KUGOU", this.queryKugouLyrics(q, targetTitle, targetArtist, queryDurationSec, fetchId));
+                if (r == null && !primaryArtist.isEmpty() && !primaryArtist.equals(targetArtist)) {
+                    r = this.wrapSyncedResult("KUGOU", this.queryKugouLyrics(primaryArtist + " " + targetTitle, targetTitle, primaryArtist, queryDurationSec, fetchId));
+                }
+                if (r == null && !targetArtist.isEmpty()) {
+                    r = this.wrapSyncedResult("KUGOU", this.queryKugouLyrics(targetTitle, targetTitle, "", queryDurationSec, fetchId));
+                }
+            }
+            return r;
+        }, this.executor));
+        futures.add(CompletableFuture.supplyAsync(() -> {
+            if (fetchId != this.currentFetchId.get()) {
+                return null;
+            }
+            LyricsConsensusEngine.Candidate r = null;
+            if (!targetTitle.isEmpty()) {
+                String q = !targetArtist.isEmpty() ? targetArtist + " " + targetTitle : targetTitle;
+                r = this.wrapSyncedResult("QQMUSIC", this.queryQqMusicLyrics(q, targetTitle, targetArtist, fetchId));
+                if (r == null && !primaryArtist.isEmpty() && !primaryArtist.equals(targetArtist)) {
+                    r = this.wrapSyncedResult("QQMUSIC", this.queryQqMusicLyrics(primaryArtist + " " + targetTitle, targetTitle, primaryArtist, fetchId));
+                }
+                if (r == null && !targetArtist.isEmpty()) {
+                    r = this.wrapSyncedResult("QQMUSIC", this.queryQqMusicLyrics(targetTitle, targetTitle, "", fetchId));
+                }
             }
             return r;
         }, this.executor));
@@ -1485,7 +1580,8 @@ public class LyricsManager {
             completableFuture.thenAccept((LyricsConsensusEngine.Candidate cand) -> {
                 if (cand != null) {
                     candidatePool.add(cand);
-                    if (cand.isSynced && !cand.possibleMismatch && cand.lines != null && !cand.lines.isEmpty() && !"NETEASE".equalsIgnoreCase(cand.provider)) {
+                    boolean isAsianFallback = "NETEASE".equalsIgnoreCase(cand.provider) || "KUGOU".equalsIgnoreCase(cand.provider) || "QQMUSIC".equalsIgnoreCase(cand.provider);
+                    if (cand.isSynced && !cand.possibleMismatch && cand.lines != null && !cand.lines.isEmpty() && !isAsianFallback) {
                         if (cacheKey != null && fetchId == this.currentFetchId.get() && !this.realSyncedTracks.contains(cacheKey)) {
                             long effDur = durationSec > 0L ? durationSec : this.lastFetchedDurationMs / 1000L;
                             boolean candAutoTempo = cand.sourceDurationMs > 25000L && effDur > 25L
@@ -1495,12 +1591,13 @@ public class LyricsManager {
                             List<LyricLine> quickLines = finalSpeedUp || finalSlowed || candAutoTempo ? this.applySpeedAdjustment(cand.lines, effDur, cand.sourceDurationMs, finalSpeedUp, finalSlowed) : cand.lines;
                             this.lyricsCache.put(cacheKey, quickLines);
                             this.realSyncedTracks.add(cacheKey);
+                            this.onTheFlyTracks.remove(cacheKey);
                         }
                         if (syncedArrivals.incrementAndGet() == 1) {
                             CompletableFuture.delayedExecutor(650L, TimeUnit.MILLISECONDS, this.executor).execute(latch::countDown);
                         }
                     }
-                    if (cand.isSynced && !"NETEASE".equalsIgnoreCase(cand.provider)) {
+                    if (cand.isSynced && !isAsianFallback) {
                         for (LyricsConsensusEngine.Candidate other : candidatePool) {
                             if (cand == other || cand.provider.equalsIgnoreCase(other.provider) || !"GENIUS".equalsIgnoreCase(other.provider) && !other.isSynced || !(LyricsConsensusEngine.computePhraseOverlap(cand.phrases, other.phrases) >= 0.55)) continue;
                             latch.countDown();
@@ -2220,7 +2317,7 @@ public class LyricsManager {
             }
             String plainText = MULTI_SPACE_PATTERN.matcher(lineTextSb.toString()).replaceAll(" ").trim();
             if (plainText.isEmpty() || parsedWords.isEmpty()) continue;
-            if (INSTRUMENTAL_LINE_PATTERN.matcher(plainText).matches()) continue;
+            if (INSTRUMENTAL_LINE_PATTERN.matcher(plainText).matches() || CREDIT_META_LINE_PATTERN.matcher(plainText).matches()) continue;
             long vocalEnd = Math.max(lineStartMs + 100L, parsedWords.get(parsedWords.size() - 1).endMs());
             long lineEnd = Math.max(vocalEnd + 250L, lineStartMs + Math.max(400L, lineDurMs));
             result.add(new LyricLine(lineStartMs, lineEnd, vocalEnd, plainText, parsedWords));
@@ -2238,6 +2335,348 @@ public class LyricsManager {
             }
         }
         return result;
+    }
+
+    private FetchResult queryKugouLyrics(String query, String targetTitle, String targetArtist, long durationSec, long fetchId) {
+        if (fetchId != this.currentFetchId.get() || query == null || query.isBlank()) {
+            return null;
+        }
+        try {
+            String searchUrl = "http://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&page=1&pagesize=5";
+            Map<String, String> headers = Map.of("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+            String searchResp = LyricsManager.httpGet(searchUrl, headers, 2500);
+            if (searchResp == null || fetchId != this.currentFetchId.get()) {
+                return null;
+            }
+            JsonElement rootEl = JsonParser.parseString(searchResp);
+            if (rootEl == null || !rootEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject rootObj = rootEl.getAsJsonObject();
+            if (!rootObj.has("data") || !rootObj.get("data").isJsonObject()) {
+                return null;
+            }
+            JsonObject dataObj = rootObj.getAsJsonObject("data");
+            if (!dataObj.has("info") || !dataObj.get("info").isJsonArray()) {
+                return null;
+            }
+            JsonArray infos = dataObj.getAsJsonArray("info");
+            if (infos.isEmpty()) {
+                return null;
+            }
+            JsonObject bestSong = null;
+            double bestScore = 0.0;
+            for (JsonElement elem : infos) {
+                if (!elem.isJsonObject()) continue;
+                JsonObject sObj = elem.getAsJsonObject();
+                String songName = sObj.has("songname") && sObj.get("songname").isJsonPrimitive() ? sObj.get("songname").getAsString() : "";
+                String singerName = sObj.has("singername") && sObj.get("singername").isJsonPrimitive() ? sObj.get("singername").getAsString() : "";
+                double tSim = LyricsManager.computeStringSimilarity(targetTitle, songName);
+                if (tSim < 0.50) continue;
+                double aSim = targetArtist != null && !targetArtist.isBlank() ? LyricsManager.computeStringSimilarity(targetArtist, singerName) : 1.0;
+                if (targetArtist != null && !targetArtist.isBlank() && aSim < 0.30 && tSim < 0.85) continue;
+                long songDurSec = sObj.has("duration") && sObj.get("duration").isJsonPrimitive() && sObj.getAsJsonPrimitive("duration").isNumber() ? sObj.getAsJsonPrimitive("duration").getAsLong() : 0L;
+                if (durationSec > 20L && songDurSec > 20L && Math.abs(durationSec - songDurSec) > 15L) continue;
+                double combined = targetArtist != null && !targetArtist.isBlank() ? (tSim * 0.65 + aSim * 0.35) : tSim;
+                if (combined > bestScore) {
+                    bestScore = combined;
+                    bestSong = sObj;
+                }
+            }
+            if (bestSong == null || bestScore < 0.50 || !bestSong.has("hash") || !bestSong.get("hash").isJsonPrimitive()) {
+                return null;
+            }
+            String hash = bestSong.get("hash").getAsString();
+            long songDurSec = bestSong.has("duration") && bestSong.get("duration").isJsonPrimitive() && bestSong.getAsJsonPrimitive("duration").isNumber() ? bestSong.getAsJsonPrimitive("duration").getAsLong() : 0L;
+            long songDurMs = songDurSec * 1000L;
+            boolean possibleMismatch = bestScore < 0.72;
+            String candUrl = "http://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=" + URLEncoder.encode(targetTitle, StandardCharsets.UTF_8) + "&duration=" + songDurMs + "&hash=" + URLEncoder.encode(hash, StandardCharsets.UTF_8);
+            String candResp = LyricsManager.httpGet(candUrl, headers, 2500);
+            if (candResp == null || fetchId != this.currentFetchId.get()) {
+                return null;
+            }
+            JsonElement candEl = JsonParser.parseString(candResp);
+            if (candEl == null || !candEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject candJson = candEl.getAsJsonObject();
+            if (!candJson.has("candidates") || !candJson.get("candidates").isJsonArray()) {
+                return null;
+            }
+            JsonArray candidates = candJson.getAsJsonArray("candidates");
+            int limit = Math.min(candidates.size(), 2);
+            for (int idx = 0; idx < limit; ++idx) {
+                if (!candidates.get(idx).isJsonObject()) continue;
+                JsonObject cObj = candidates.get(idx).getAsJsonObject();
+                String candId = cObj.has("id") && cObj.get("id").isJsonPrimitive() ? cObj.get("id").getAsString() : "";
+                String accessKey = cObj.has("accesskey") && cObj.get("accesskey").isJsonPrimitive() ? cObj.get("accesskey").getAsString() : "";
+                if (candId.isEmpty() || accessKey.isEmpty()) continue;
+                String krcDlUrl = "http://lyrics.kugou.com/download?ver=1&client=pc&id=" + URLEncoder.encode(candId, StandardCharsets.UTF_8) + "&accesskey=" + URLEncoder.encode(accessKey, StandardCharsets.UTF_8) + "&fmt=krc&charset=utf8";
+                String krcDlResp = LyricsManager.httpGet(krcDlUrl, headers, 2500);
+                if (krcDlResp != null && fetchId == this.currentFetchId.get()) {
+                    JsonElement kdlEl = JsonParser.parseString(krcDlResp);
+                    if (kdlEl != null && kdlEl.isJsonObject() && kdlEl.getAsJsonObject().has("content") && kdlEl.getAsJsonObject().get("content").isJsonPrimitive()) {
+                        String decodedKrc = LyricsManager.decodeKugouKrc(kdlEl.getAsJsonObject().get("content").getAsString());
+                        List<LyricLine> kLines = this.parseNeteaseKaraokeLrc(decodedKrc);
+                        if (!kLines.isEmpty()) {
+                            return new FetchResult(kLines, possibleMismatch, true, songDurMs, true);
+                        }
+                    }
+                }
+                if (fetchId != this.currentFetchId.get()) {
+                    return null;
+                }
+                String lrcDlUrl = "http://lyrics.kugou.com/download?ver=1&client=pc&id=" + URLEncoder.encode(candId, StandardCharsets.UTF_8) + "&accesskey=" + URLEncoder.encode(accessKey, StandardCharsets.UTF_8) + "&fmt=lrc&charset=utf8";
+                String lrcDlResp = LyricsManager.httpGet(lrcDlUrl, headers, 2500);
+                if (lrcDlResp != null && fetchId == this.currentFetchId.get()) {
+                    JsonElement ldlEl = JsonParser.parseString(lrcDlResp);
+                    if (ldlEl != null && ldlEl.isJsonObject() && ldlEl.getAsJsonObject().has("content") && ldlEl.getAsJsonObject().get("content").isJsonPrimitive()) {
+                        String rawLrc = new String(Base64.getDecoder().decode(ldlEl.getAsJsonObject().get("content").getAsString().trim()), StandardCharsets.UTF_8);
+                        List<LyricLine> lLines = this.parseLrc(LyricsManager.unescapeHtmlEntities(rawLrc));
+                        if (!lLines.isEmpty()) {
+                            return new FetchResult(lLines, possibleMismatch, true, songDurMs, false);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static String decodeKugouKrc(String base64Content) {
+        if (base64Content == null || base64Content.isBlank()) {
+            return "";
+        }
+        try {
+            byte[] raw = Base64.getDecoder().decode(base64Content.trim());
+            if (raw.length <= 6 || raw[0] != 'k' || raw[1] != 'r' || raw[2] != 'c' || raw[3] != '1') {
+                return "";
+            }
+            byte[] key = new byte[]{64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, (byte)206, (byte)210, 110, 105};
+            byte[] enc = new byte[raw.length - 4];
+            for (int i = 0; i < enc.length; ++i) {
+                enc[i] = (byte)(raw[i + 4] ^ key[i % 16]);
+            }
+            Inflater inflater = new Inflater(false);
+            try {
+                inflater.setInput(enc);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream(enc.length * 2);
+                byte[] buf = new byte[2048];
+                while (!inflater.finished()) {
+                    int count = inflater.inflate(buf);
+                    if (count <= 0) {
+                        if (inflater.needsInput() || inflater.needsDictionary()) {
+                            break;
+                        }
+                    } else {
+                        baos.write(buf, 0, count);
+                    }
+                }
+                return baos.toString(StandardCharsets.UTF_8);
+            } finally {
+                inflater.end();
+            }
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private FetchResult queryQqMusicLyrics(String query, String targetTitle, String targetArtist, long fetchId) {
+        if (fetchId != this.currentFetchId.get() || query == null || query.isBlank()) {
+            return null;
+        }
+        try {
+            String searchUrl = "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?key=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&format=json";
+            Map<String, String> headers = Map.of("Referer", "https://y.qq.com/", "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+            String searchResp = LyricsManager.httpGet(searchUrl, headers, 2500);
+            if (searchResp == null || fetchId != this.currentFetchId.get()) {
+                return null;
+            }
+            JsonElement rootEl = JsonParser.parseString(searchResp);
+            if (rootEl == null || !rootEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject root = rootEl.getAsJsonObject();
+            if (!root.has("data") || !root.get("data").isJsonObject()) {
+                return null;
+            }
+            JsonObject data = root.getAsJsonObject("data");
+            if (!data.has("song") || !data.get("song").isJsonObject()) {
+                return null;
+            }
+            JsonObject songObj = data.getAsJsonObject("song");
+            if (!songObj.has("itemlist") || !songObj.get("itemlist").isJsonArray()) {
+                return null;
+            }
+            JsonArray items = songObj.getAsJsonArray("itemlist");
+            if (items.isEmpty()) {
+                return null;
+            }
+            String bestMid = null;
+            double bestScore = 0.0;
+            for (JsonElement elem : items) {
+                if (!elem.isJsonObject()) continue;
+                JsonObject sObj = elem.getAsJsonObject();
+                String name = sObj.has("name") && sObj.get("name").isJsonPrimitive() ? sObj.get("name").getAsString() : "";
+                String singer = sObj.has("singer") && sObj.get("singer").isJsonPrimitive() ? sObj.get("singer").getAsString() : "";
+                String mid = sObj.has("mid") && sObj.get("mid").isJsonPrimitive() ? sObj.get("mid").getAsString() : "";
+                if (mid.isEmpty()) continue;
+                double tSim = LyricsManager.computeStringSimilarity(targetTitle, name);
+                if (tSim < 0.50) continue;
+                double aSim = targetArtist != null && !targetArtist.isBlank() ? LyricsManager.computeStringSimilarity(targetArtist, singer) : 1.0;
+                if (targetArtist != null && !targetArtist.isBlank() && aSim < 0.30 && tSim < 0.85) continue;
+                double combined = targetArtist != null && !targetArtist.isBlank() ? (tSim * 0.65 + aSim * 0.35) : tSim;
+                if (combined > bestScore) {
+                    bestScore = combined;
+                    bestMid = mid;
+                }
+            }
+            if (bestMid == null || bestScore < 0.50) {
+                return null;
+            }
+            boolean possibleMismatch = bestScore < 0.72;
+            String lyricUrl = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=" + URLEncoder.encode(bestMid, StandardCharsets.UTF_8) + "&format=json&nobase64=0";
+            String lyricResp = LyricsManager.httpGet(lyricUrl, headers, 2500);
+            if (lyricResp == null || fetchId != this.currentFetchId.get()) {
+                return null;
+            }
+            JsonElement lEl = JsonParser.parseString(lyricResp);
+            if (lEl == null || !lEl.isJsonObject()) {
+                return null;
+            }
+            JsonObject lJson = lEl.getAsJsonObject();
+            if (lJson.has("lyric") && lJson.get("lyric").isJsonPrimitive()) {
+                String decodedLrc = new String(Base64.getDecoder().decode(lJson.get("lyric").getAsString().trim()), StandardCharsets.UTF_8);
+                decodedLrc = LyricsManager.unescapeHtmlEntities(decodedLrc);
+                List<LyricLine> lines = this.parseLrc(decodedLrc);
+                if (!lines.isEmpty()) {
+                    return new FetchResult(lines, possibleMismatch, true, 0L, ENHANCED_TAG_STRIP_PATTERN.matcher(decodedLrc).find());
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static String unescapeHtmlEntities(String s) {
+        if (s == null || s.isEmpty()) {
+            return "";
+        }
+        return s.replace("&apos;", "'")
+                .replace("&#39;", "'")
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&nbsp;", " ");
+    }
+
+    private static String transliterateRuEn(String input) {
+        if (input == null || input.isBlank()) {
+            return "";
+        }
+        boolean hasCyr = false;
+        boolean hasLat = false;
+        for (int i = 0; i < input.length(); ++i) {
+            char c = input.charAt(i);
+            if (c >= '\u0400' && c <= '\u04ff') {
+                hasCyr = true;
+            } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                hasLat = true;
+            }
+        }
+        String low = input.toLowerCase(Locale.ROOT);
+        if (hasCyr && !hasLat) {
+            StringBuilder sb = new StringBuilder(low.length() * 2);
+            for (int i = 0; i < low.length(); ++i) {
+                char c = low.charAt(i);
+                switch (c) {
+                    case '\u0430': sb.append('a'); break;
+                    case '\u0431': sb.append('b'); break;
+                    case '\u0432': sb.append('v'); break;
+                    case '\u0433': sb.append('g'); break;
+                    case '\u0434': sb.append('d'); break;
+                    case '\u0435': sb.append('e'); break;
+                    case '\u0451': sb.append("yo"); break;
+                    case '\u0436': sb.append("zh"); break;
+                    case '\u0437': sb.append('z'); break;
+                    case '\u0438': sb.append('i'); break;
+                    case '\u0439': sb.append('y'); break;
+                    case '\u043a': sb.append('k'); break;
+                    case '\u043b': sb.append('l'); break;
+                    case '\u043c': sb.append('m'); break;
+                    case '\u043d': sb.append('n'); break;
+                    case '\u043e': sb.append('o'); break;
+                    case '\u043f': sb.append('p'); break;
+                    case '\u0440': sb.append('r'); break;
+                    case '\u0441': sb.append('s'); break;
+                    case '\u0442': sb.append('t'); break;
+                    case '\u0443': sb.append('u'); break;
+                    case '\u0444': sb.append('f'); break;
+                    case '\u0445': sb.append("kh"); break;
+                    case '\u0446': sb.append("ts"); break;
+                    case '\u0447': sb.append("ch"); break;
+                    case '\u0448': sb.append("sh"); break;
+                    case '\u0449': sb.append("shch"); break;
+                    case '\u044a': break;
+                    case '\u044b': sb.append('y'); break;
+                    case '\u044c': break;
+                    case '\u044d': sb.append('e'); break;
+                    case '\u044e': sb.append("yu"); break;
+                    case '\u044f': sb.append("ya"); break;
+                    default: sb.append(c); break;
+                }
+            }
+            return sb.toString();
+        }
+        if (hasLat && !hasCyr) {
+            String s = low.replace("shch", "\u0449")
+                    .replace("ch", "\u0447")
+                    .replace("sh", "\u0448")
+                    .replace("zh", "\u0436")
+                    .replace("kh", "\u0445")
+                    .replace("ts", "\u0446")
+                    .replace("yu", "\u044e")
+                    .replace("ya", "\u044f")
+                    .replace("yo", "\u0451")
+                    .replace("ye", "\u0435");
+            StringBuilder sb = new StringBuilder(s.length());
+            for (int i = 0; i < s.length(); ++i) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case 'a': sb.append('\u0430'); break;
+                    case 'b': sb.append('\u0431'); break;
+                    case 'c': sb.append('\u043a'); break;
+                    case 'd': sb.append('\u0434'); break;
+                    case 'e': sb.append('\u0435'); break;
+                    case 'f': sb.append('\u0444'); break;
+                    case 'g': sb.append('\u0433'); break;
+                    case 'h': sb.append('\u0445'); break;
+                    case 'i': sb.append('\u0438'); break;
+                    case 'j': sb.append("\u0434\u0436"); break;
+                    case 'k': sb.append('\u043a'); break;
+                    case 'l': sb.append('\u043b'); break;
+                    case 'm': sb.append('\u043c'); break;
+                    case 'n': sb.append('\u043d'); break;
+                    case 'o': sb.append('\u043e'); break;
+                    case 'p': sb.append('\u043f'); break;
+                    case 'q': sb.append('\u043a'); break;
+                    case 'r': sb.append('\u0440'); break;
+                    case 's': sb.append('\u0441'); break;
+                    case 't': sb.append('\u0442'); break;
+                    case 'u': sb.append('\u0443'); break;
+                    case 'v': sb.append('\u0432'); break;
+                    case 'w': sb.append('\u0432'); break;
+                    case 'x': sb.append("\u043a\u0441"); break;
+                    case 'y': sb.append('\u0439'); break;
+                    case 'z': sb.append('\u0437'); break;
+                    default: sb.append(c); break;
+                }
+            }
+            return sb.toString();
+        }
+        return input;
     }
 
     private LyricsConsensusEngine.Candidate wrapSyncedResult(String provider, FetchResult res) {
@@ -2729,9 +3168,9 @@ public class LyricsManager {
         for (int i = 0; i < rawList.size(); ++i) {
             String plainText;
             RawLine current = (RawLine)rawList.get(i);
-            if (current.text.isEmpty() || (plainText = this.stripEnhancedLrcTags(current.text)).isEmpty() || INSTRUMENTAL_LINE_PATTERN.matcher(plainText).matches()) continue;
+            if (current.text.isEmpty() || (plainText = this.stripEnhancedLrcTags(current.text)).isEmpty() || INSTRUMENTAL_LINE_PATTERN.matcher(plainText).matches() || CREDIT_META_LINE_PATTERN.matcher(plainText).matches()) continue;
             plainText = MULTI_SPACE_PATTERN.matcher(plainText.replace("\\n", " ").replace(" // ", ", ").replace(" / ", ", ")).replaceAll(" ").trim();
-            if (plainText.isEmpty()) continue;
+            if (plainText.isEmpty() || CREDIT_META_LINE_PATTERN.matcher(plainText).matches()) continue;
             long startMs = current.timeMs;
             long nextTimeMs = i < rawList.size() - 1 ? ((RawLine)rawList.get((int)(i + 1))).timeMs : startMs + 5000L;
             long gap = Math.max(600L, nextTimeMs - startMs);
@@ -3105,7 +3544,7 @@ public class LyricsManager {
         }
         if (fetchId == this.currentFetchId.get()) {
             String srcLyrics = rawPlainLyrics != null && !rawPlainLyrics.isBlank() ? rawPlainLyrics : String.join("\n", plainLines);
-            List<LyricLine> localCascade = StudioCascadeAligner.align(srcLyrics, null, totalDurationMs);
+            List<LyricLine> localCascade = StudioCascadeAligner.align(srcLyrics, wavBytes, totalDurationMs);
             if (localCascade != null && !localCascade.isEmpty()) {
                 return new FetchResult(localCascade, false);
             }
