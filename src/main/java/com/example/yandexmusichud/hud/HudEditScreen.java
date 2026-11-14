@@ -711,7 +711,8 @@ extends class_437 {
             this.registerHelp(btnFolder.method_46426(), btnFolder.method_46427(), btnFolder.method_25368(), btnFolder.method_25364(), "Папка фонов", "Открывает папку backgrounds в Проводнике.", "Добавляйте картинки прямо во время игры.");
 
             boolean isPopup = "POPUP".equalsIgnoreCase(HudConfig.INSTANCE.hudDisplayType);
-            ModernButtonWidget btnPopup = new ModernButtonWidget(contentX + colW + 4, contentY + 66, colW, 19, (class_2561)class_2561.method_43470("Показ: " + (isPopup ? "§bВсплыв." : "§aВсегда")), b -> {
+            int popupW = colW - 22;
+            ModernButtonWidget btnPopup = new ModernButtonWidget(contentX + colW + 4, contentY + 66, popupW, 19, (class_2561)class_2561.method_43470("Показ: " + (isPopup ? "§bВсплыв." : "§aВсегда")), b -> {
                 HudConfig.INSTANCE.hudDisplayType = "POPUP".equalsIgnoreCase(HudConfig.INSTANCE.hudDisplayType) ? "ALWAYS" : "POPUP";
                 HudConfig.save();
                 this.screenShake = 0.8f;
@@ -719,6 +720,17 @@ extends class_437 {
             });
             this.method_37063(btnPopup);
             this.registerHelp(btnPopup.method_46426(), btnPopup.method_46427(), btnPopup.method_25368(), btnPopup.method_25364(), "Показ карточки", "Всплывает при смене трека или видна всегда.", "Всплывающий не загромождает экран.");
+
+            ModernButtonWidget btnMiniKaraoke = new ModernButtonWidget(contentX + colW + 4 + popupW + 4, contentY + 66, 18, 19, (class_2561)class_2561.method_43470(HudConfig.INSTANCE.hudMiniKaraoke ? "§a♪" : "§7♪"), b -> {
+                HudConfig.INSTANCE.hudMiniKaraoke = !HudConfig.INSTANCE.hudMiniKaraoke;
+                HudConfig.save();
+                this.screenShake = 0.5f;
+                this.triggerFeedback("§bМини-караоке в HUD: " + (HudConfig.INSTANCE.hudMiniKaraoke ? "§aВКЛ" : "§cВЫКЛ"), HudConfig.INSTANCE.hudMiniKaraoke ? 0x10B981 : 0xFF5F56);
+                this.buildTabWidgets();
+            });
+            btnMiniKaraoke.setCustomBgColor(HudConfig.INSTANCE.hudMiniKaraoke ? 0xDD0D221D : 0xDD182232);
+            this.method_37063(btnMiniKaraoke);
+            this.registerHelp(btnMiniKaraoke.method_46426(), btnMiniKaraoke.method_46427(), btnMiniKaraoke.method_25368(), btnMiniKaraoke.method_25364(), "Мини-караоке в карточке", "Показывает живую караоке-строку прямо внутри виджета трека.", "ВКЛ — удобно следить за словами с первого взгляда.");
 
             int sliderW = this.panelWidth - (this.dockSide != 0 ? 16 : 20);
             int curSliderY = contentY + 89;
@@ -1023,6 +1035,34 @@ extends class_437 {
                 this.screenShake = 1.0f;
             });
             this.method_37063(btnResetCol);
+
+            int[] presetRgbs = new int[]{0x38BDF8, 0x10B981, 0xA855F7, 0xF59E0B, 0xF43F5E, 0xF8FAFC};
+            String[] presetNames = new String[]{"Неон", "Изумруд", "Аметист", "Золото", "Рубин", "Белый"};
+            int presetGap = 3;
+            int presetW = Math.max(16, (resetW - presetGap * 5) / 6);
+            int curTargetRgb = this.getCurrentTargetColor() & 0xFFFFFF;
+            for (int pi = 0; pi < presetRgbs.length; ++pi) {
+                final int presetRgb = presetRgbs[pi];
+                final String presetName = presetNames[pi];
+                boolean isCurPreset = curTargetRgb == presetRgb;
+                String swatchMark = isCurPreset ? (presetRgb == 0xF8FAFC || presetRgb == 0xF59E0B ? "§0✓" : "§f✓") : "";
+                int px = contentX + offsetResetX + pi * (presetW + presetGap);
+                int py = contentY + 96;
+                ModernButtonWidget btnPreset = new ModernButtonWidget(px, py, presetW, 16, (class_2561)class_2561.method_43470(swatchMark), b -> {
+                    this.setCurrentTargetColor(presetRgb);
+                    if (this.paletteColorWheel != null) {
+                        this.paletteColorWheel.setColorFromRgb(presetRgb);
+                    }
+                    HudConfig.save();
+                    String hexStr = Integer.toHexString(0x1000000 | (presetRgb & 0xFFFFFF)).substring(1).toUpperCase(java.util.Locale.ROOT);
+                    this.triggerFeedback("§bПресет «" + presetName + "»: §e#" + hexStr, presetRgb);
+                    this.screenShake = 0.4f;
+                    this.buildTabWidgets();
+                });
+                btnPreset.setCustomBgColor(0xFF000000 | presetRgb);
+                this.method_37063(btnPreset);
+                this.registerHelp(px, py, presetW, 16, "Пресет: " + presetName, "Быстрая установка оттенка для выбранного элемента.", "Нажмите, чтобы применить цвет и обновить круг.");
+            }
         } else if (this.currentTab == 3) {
             int leftCardW = this.dockSide != 0 ? 100 : 120;
             int rightCardX = contentX + leftCardW + 6;
@@ -1863,14 +1903,21 @@ extends class_437 {
             if (isSelected) {
                 MusicHudRenderer.renderRoundedRect(context, itemX, itemY, itemW, itemH, 4, isHovered ? 0xDD112A28 : 0xCC0C2020);
                 MusicHudRenderer.renderRoundedBorder(context, itemX, itemY, itemW, itemH, 4, 0xEE10B981, 0x7738BDF8);
+                MusicHudRenderer.renderRoundedRect(context, itemX + 2, itemY + 4, 2, itemH - 8, 1, 0xFF10B981);
             } else if (isHovered) {
                 MusicHudRenderer.renderRoundedRect(context, itemX, itemY, itemW, itemH, 4, 0xDD132032);
                 MusicHudRenderer.renderRoundedBorder(context, itemX, itemY, itemW, itemH, 4, 0xAA38BDF8, 0x55334155);
             }
 
+            if (hasBadge) {
+                this.renderDropdownPreviewBadge(context, this.activeDropdownId, item.key, itemX + itemW - 24, itemY + 3, 20, 12, isSelected, isHovered, nowMs);
+            }
+
             int labelX = itemX + 8;
+            int maxLblW = Math.max(24, hasBadge ? itemW - 34 : itemW - 14);
+            String drawLabel = this.field_22793.method_1727(item.label) > maxLblW ? this.field_22793.method_27523(item.label, maxLblW) : item.label;
             int textColor = isSelected ? 0xFF34D399 : (isHovered ? 0xFFF8FAFC : 0xFFCBD5E1);
-            context.method_51433(this.field_22793, item.label, labelX, itemY + 5, textColor, false);
+            context.method_51433(this.field_22793, drawLabel, labelX, itemY + 5, textColor, false);
         }
         if (this.activeDropdownItems.size() > this.activeDropdownMaxVisible) {
             int scrollbarH = Math.max(12, dropH * this.activeDropdownMaxVisible / this.activeDropdownItems.size());

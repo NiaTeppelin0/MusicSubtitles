@@ -30,7 +30,6 @@ import net.minecraft.class_327;
 import net.minecraft.class_332;
 import net.minecraft.class_3414;
 import net.minecraft.class_3417;
-import net.minecraft.class_342;
 import net.minecraft.class_437;
 import net.minecraft.class_6880;
 
@@ -68,9 +67,9 @@ public class LyricEditorScreen extends class_437 {
     private float targetScroll = 0.0f;
     private int selectedIndex = 0;
     private int selectedWordIndex = -1;
-    private class_342 editField;
-    private class_342 hexField;
-    private class_342 fontField;
+    private ModernTextFieldWidget editField;
+    private ModernTextFieldWidget hexField;
+    private ModernTextFieldWidget fontField;
     private int currentHexColor = 0x00E5FF;
     private String customFont = "minecraft:default";
     private int fontPresetIdx = 0;
@@ -193,7 +192,7 @@ public class LyricEditorScreen extends class_437 {
         bSlide.setCustomBgColor(0xDD282E3E);
         this.method_37063(bSlide);
 
-        this.hexField = new class_342(this.field_22793, leftX + 6, 94, 72, 14, (class_2561)class_2561.method_43470("#RRGGBB"));
+        this.hexField = new ModernTextFieldWidget(this.field_22793, leftX + 6, 94, 72, 14, (class_2561)class_2561.method_43470("#RRGGBB")).setPlaceholder("#RRGGBB");
         this.hexField.method_1880(7);
         this.hexField.method_1852(String.format(Locale.US, "#%06X", this.currentHexColor));
         this.hexField.method_1863(text -> {
@@ -260,7 +259,7 @@ public class LyricEditorScreen extends class_437 {
         bFontPreset.setCustomBgColor(0xDD1B3A2C);
         this.method_37063(bFontPreset);
 
-        this.fontField = new class_342(this.field_22793, leftX + 6, 173, fullLeftW, 14, (class_2561)class_2561.method_43470("namespace:font"));
+        this.fontField = new ModernTextFieldWidget(this.field_22793, leftX + 6, 173, fullLeftW, 14, (class_2561)class_2561.method_43470("namespace:font")).setPlaceholder("namespace:font");
         this.fontField.method_1880(120);
         this.fontField.method_1852(this.customFont);
         this.fontField.method_1863(newFont -> {
@@ -344,10 +343,9 @@ public class LyricEditorScreen extends class_437 {
         int editFieldY = wordStripY + 16;
 
         String curText = (this.selectedIndex >= 0 && this.selectedIndex < this.lines.size()) ? this.lines.get(this.selectedIndex).text : "";
-        this.editField = new class_342(this.field_22793, centerX + 4, editFieldY, centerW - 8, 15, (class_2561)class_2561.method_43470("Текст строки..."));
+        this.editField = new ModernTextFieldWidget(this.field_22793, centerX + 4, editFieldY, centerW - 8, 15, (class_2561)class_2561.method_43470("Текст строки...")).setPlaceholder("Текст выбранной строки...");
         this.editField.method_1880(1000);
         this.editField.method_1852(curText);
-        this.editField.method_47404((class_2561)class_2561.method_43470("Текст выбранной строки..."));
         this.editField.method_1863(newText -> {
             if (this.updatingFieldText) {
                 return;

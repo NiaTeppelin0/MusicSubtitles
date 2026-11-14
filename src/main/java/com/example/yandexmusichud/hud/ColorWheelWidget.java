@@ -149,17 +149,23 @@ public class ColorWheelWidget {
     }
 
     public void render(class_332 context, int mouseX, int mouseY) {
+        int bezelR = this.size / 2 + 2;
+        MusicHudRenderer.renderRoundedRect(context, this.x - 2, this.y - 2, this.size + 4, this.size + 4, bezelR, 0xCC080B12);
         int brInt = Math.max(20, Math.min(255, (int)(this.currentBrightness * 255.0f)));
         int tint = 0xFF000000 | (brInt << 16) | (brInt << 8) | brInt;
         context.method_25291(class_10799.field_56883, COLOR_WHEEL_TEXTURE, this.x, this.y, 0.0f, 0.0f, this.size, this.size, this.size, this.size, tint);
+        MusicHudRenderer.renderRoundedBorder(context, this.x - 2, this.y - 2, this.size + 4, this.size + 4, bezelR, this.isDragging ? 0xCC38BDF8 : 0x55475569, 0x331E293B);
         float angle = this.currentHue * 2.0f * (float)Math.PI - (float)Math.PI;
         float dist = this.currentSaturation * (this.radius - 1.0f);
         int selX = Math.round(this.centerX + (float)Math.cos(angle) * dist);
         int selY = Math.round(this.centerY + (float)Math.sin(angle) * dist);
-        context.method_25294(selX - 3, selY - 3, selX + 4, selY + 4, -1);
-        context.method_25294(selX - 2, selY - 2, selX + 3, selY + 3, -16777216);
         int curRgb = this.getRgb();
-        context.method_25294(selX - 1, selY - 1, selX + 2, selY + 2, 0xFF000000 | curRgb);
+        if (this.isDragging) {
+            MusicHudRenderer.renderRoundedRect(context, selX - 5, selY - 5, 11, 11, 5, 0x55000000 | curRgb);
+        }
+        MusicHudRenderer.renderRoundedRect(context, selX - 4, selY - 4, 9, 9, 4, 0xFFFFFFFF);
+        MusicHudRenderer.renderRoundedRect(context, selX - 3, selY - 3, 7, 7, 3, 0xFF0A0D14);
+        MusicHudRenderer.renderRoundedRect(context, selX - 2, selY - 2, 5, 5, 2, 0xFF000000 | curRgb);
     }
 
     public boolean mouseClicked(double mouseX, double mouseY) {

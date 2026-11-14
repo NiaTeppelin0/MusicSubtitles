@@ -86,10 +86,10 @@ public class MusicHudRenderer {
     public static int lastCancelBtnScreenH = 0;
     public static boolean lastCancelBtnVisible = false;
     public static boolean lastMicroControlsVisible = false;
-    public static final int[] lastMicroBtnScreenX = new int[4];
-    public static final int[] lastMicroBtnScreenY = new int[4];
-    public static final int[] lastMicroBtnScreenW = new int[4];
-    public static final int[] lastMicroBtnScreenH = new int[4];
+    public static final int[] lastMicroBtnScreenX = new int[5];
+    public static final int[] lastMicroBtnScreenY = new int[5];
+    public static final int[] lastMicroBtnScreenW = new int[5];
+    public static final int[] lastMicroBtnScreenH = new int[5];
     private long lastRenderTime = 0L;
     private long lastEqUpdateTime = 0L;
     private final float[] eqBarHeights = new float[12];
@@ -111,7 +111,7 @@ public class MusicHudRenderer {
         if (state == null || !state.isActive()) {
             return false;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (mouseX >= (double)lastMicroBtnScreenX[i] && mouseX <= (double)(lastMicroBtnScreenX[i] + lastMicroBtnScreenW[i]) &&
                 mouseY >= (double)lastMicroBtnScreenY[i] && mouseY <= (double)(lastMicroBtnScreenY[i] + lastMicroBtnScreenH[i])) {
                 class_310 mc = class_310.method_1551();
@@ -131,6 +131,16 @@ public class MusicHudRenderer {
                                     : "§b[Музыка] §7Удалено из избранного: §f" + state.artist() + " - " + state.title();
                                 mc.field_1705.method_1758((class_2561)class_2561.method_43470(msg), false);
                             }
+                        }
+                    }
+                    case 4 -> {
+                        HudConfig.INSTANCE.hudMiniKaraoke = !HudConfig.INSTANCE.hudMiniKaraoke;
+                        HudConfig.save();
+                        if (mc != null && mc.field_1705 != null) {
+                            String msg = HudConfig.INSTANCE.hudMiniKaraoke
+                                ? "§b[Музыка] §aМини-караоке в карточке: ВКЛ"
+                                : "§b[Музыка] §7Мини-караоке в карточке: ВЫКЛ";
+                            mc.field_1705.method_1758((class_2561)class_2561.method_43470(msg), false);
                         }
                     }
                 }
@@ -674,6 +684,7 @@ public class MusicHudRenderer {
         com.example.yandexmusichud.lyrics.LyricLine upcomingLine = (activeLine == null && HudConfig.INSTANCE.hudMiniKaraoke && lm != null) ? lm.getUpcomingLine(state, currentPosMs) : null;
         java.util.List<com.example.yandexmusichud.lyrics.LyricLine> trackLyrics = lm != null && !lm.isCurrentTrackDisabled() ? lm.getLyricsForTrack(state) : null;
         boolean hasTrackLyrics = trackLyrics != null && !trackLyrics.isEmpty();
+        boolean isLiveGen = lm != null && (lm.isTrackOnTheFly(state) || lm.isLiveAudioGenerating());
         boolean showKaraokeStrip = HudConfig.INSTANCE.hudMiniKaraoke && (activeLine != null || upcomingLine != null || hasTrackLyrics);
 
         if (isIsland) {
@@ -726,9 +737,9 @@ public class MusicHudRenderer {
             }
             int textX = mirrorLayout ? waveX + totalWaveW + 8 : coverX + coverSize + 8;
             int maxTextW = Math.max(40, baseW - coverSize - totalWaveW - coverMargin * 2 - 20);
-            int titleX = (mirrorLayout && this.hoverControlsAlpha > 0.1f) ? Math.max(textX, 76) : textX;
+            int titleX = (mirrorLayout && this.hoverControlsAlpha > 0.1f) ? Math.max(textX, 90) : textX;
             int titleMaxW = this.hoverControlsAlpha > 0.1f
-                ? (mirrorLayout ? Math.max(36, coverX - 8 - titleX) : Math.max(36, Math.min(maxTextW, (baseW - 76) - titleX)))
+                ? (mirrorLayout ? Math.max(36, coverX - 8 - titleX) : Math.max(36, Math.min(maxTextW, (baseW - 90) - titleX)))
                 : maxTextW;
             int titleY = isLarge ? 10 : 7;
             this.renderMarqueeText(context, textRenderer, title, titleX, titleY, titleMaxW, alpha << 24 | 0xFFFFFF, now, true);
@@ -814,9 +825,9 @@ public class MusicHudRenderer {
         int maxTextWidth = Math.max(48, baseW - (coverMargin * 2 + coverSize + 10 + vinylExtraOffset));
         int titleColor = alpha << 24 | 0xF8FAFC;
         int artistColor = alpha << 24 | 0x94A3B8;
-        int titleX = (mirrorLayout && this.hoverControlsAlpha > 0.1f) ? Math.max(textX, 76) : textX;
+        int titleX = (mirrorLayout && this.hoverControlsAlpha > 0.1f) ? Math.max(textX, 90) : textX;
         int titleMaxW = this.hoverControlsAlpha > 0.1f
-            ? (mirrorLayout ? Math.max(36, maxTextWidth - (titleX - textX)) : Math.max(36, Math.min(maxTextWidth, (baseW - 76) - titleX)))
+            ? (mirrorLayout ? Math.max(36, maxTextWidth - (titleX - textX)) : Math.max(36, Math.min(maxTextWidth, (baseW - 90) - titleX)))
             : maxTextWidth;
         this.renderMarqueeText(context, textRenderer, title, titleX, textY, titleMaxW, titleColor, now, true);
         this.renderMarqueeText(context, textRenderer, artist, textX, textY + (showKaraokeStrip ? (isLarge ? 12 : 11) : 13), maxTextWidth, artistColor, now, false);
@@ -895,6 +906,16 @@ public class MusicHudRenderer {
                     badgeX += spdW + 6;
                 }
             }
+            if (isLiveGen) {
+                String liveText = "● LIVE";
+                int liveW = textRenderer.method_1727(liveText);
+                if (badgeX + liveW + 4 <= rightLimitX) {
+                    float livePulse = (float)Math.sin((double)now * 0.008) * 0.35f + 0.65f;
+                    MusicHudRenderer.renderRoundedRect(context, badgeX - 2, badgeY - 1, liveW + 4, 10, 3, (int)((float)alpha * 0.26f * livePulse) << 24 | 0x10B981);
+                    context.method_51433(textRenderer, liveText, badgeX, badgeY, alpha << 24 | 0x34D399, false);
+                    badgeX += liveW + 6;
+                }
+            }
             int starDrawX = Math.min(badgeX, textX + maxTextWidth - timeWidth - 12);
             if (isFav) {
                 MusicHudRenderer.renderRoundedRect(context, starDrawX - 2, badgeY - 1, 12, 10, 3, (int)((float)alpha * 0.22f) << 24 | 0xFFD700);
@@ -936,6 +957,16 @@ public class MusicHudRenderer {
                 int spdW = textRenderer.method_1727(spdText);
                 MusicHudRenderer.renderRoundedRect(context, platX - 2, platY - 1, spdW + 4, 10, 3, (int)((float)alpha * 0.22f) << 24 | 0xFFA500);
                 context.method_51433(textRenderer, spdText, platX, platY, alpha << 24 | 0xFFB732, false);
+                platX += spdW + 5;
+            }
+            if (isLiveGen) {
+                String liveText = "LIVE";
+                int liveW = textRenderer.method_1727(liveText);
+                if (platX + liveW + 5 <= textX + maxTextWidth - timeWidth - 4) {
+                    float livePulse = (float)Math.sin((double)now * 0.008) * 0.35f + 0.65f;
+                    MusicHudRenderer.renderRoundedRect(context, platX - 2, platY - 1, liveW + 4, 10, 3, (int)((float)alpha * 0.26f * livePulse) << 24 | 0x10B981);
+                    context.method_51433(textRenderer, liveText, platX, platY, alpha << 24 | 0x34D399, false);
+                }
             }
             context.method_51433(textRenderer, timeText, textX + maxTextWidth - timeWidth, metaRowY, timeColor, false);
         }
@@ -1005,7 +1036,7 @@ public class MusicHudRenderer {
         int btnH = 12;
         int gap = 2;
         int pillPad = 2;
-        int pillW = 4 * btnW + 3 * gap + pillPad * 2;
+        int pillW = 5 * btnW + 4 * gap + pillPad * 2;
         int pillH = btnH + pillPad * 2;
         int pillX = mirrorLayout ? 6 : baseW - pillW - 6;
         int pillY = 5;
@@ -1017,9 +1048,10 @@ public class MusicHudRenderer {
             "⏮",
             state.isPlaying() ? "⏸" : "▶",
             "⏭",
-            isFav ? "★" : "☆"
+            isFav ? "★" : "☆",
+            "♪"
         };
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             int bx = pillX + pillPad + i * (btnW + gap);
             int by = pillY + pillPad;
             int scrX = finalX + Math.round((float)bx * scale);
@@ -1035,8 +1067,12 @@ public class MusicHudRenderer {
             if (btnHov) {
                 int hovCol = i == 3 ? 0xFFD700 : 0x38BDF8;
                 MusicHudRenderer.renderRoundedRect(context, bx, by, btnW, btnH, 3, (int)((float)cAlpha * 0.35f) << 24 | hovCol);
+            } else if (i == 4 && HudConfig.INSTANCE.hudMiniKaraoke) {
+                MusicHudRenderer.renderRoundedRect(context, bx, by, btnW, btnH, 3, (int)((float)cAlpha * 0.22f) << 24 | 0x38BDF8);
             }
-            int iconCol = i == 3 && isFav ? (cAlpha << 24 | 0xFFD700) : (btnHov ? (cAlpha << 24 | 0xFFFFFF) : (cAlpha << 24 | 0xCBD5E1));
+            int iconCol = i == 3 && isFav
+                ? (cAlpha << 24 | 0xFFD700)
+                : (i == 4 && HudConfig.INSTANCE.hudMiniKaraoke && !btnHov ? (cAlpha << 24 | 0x38BDF8) : (btnHov ? (cAlpha << 24 | 0xFFFFFF) : (cAlpha << 24 | 0xCBD5E1)));
             int iw = tr.method_1727(icons[i]);
             context.method_51433(tr, icons[i], bx + (btnW - iw) / 2, by + 2, iconCol, false);
         }
@@ -1342,11 +1378,25 @@ public class MusicHudRenderer {
             return;
         }
         long elapsed = now - scrollDelay;
-        int totalScroll = textWidth - maxWidth + 24;
-        float scrollSpeed = 28.0f;
-        float cycleTime = (float)totalScroll / scrollSpeed * 1000.0f + 2500.0f;
-        float phase = (float)(elapsed % (long)cycleTime) / cycleTime;
-        int scrollOffset = phase < 0.75f ? (int)(phase / 0.75f * (float)totalScroll) : 0;
+        int totalScroll = textWidth - maxWidth + 18;
+        long oneWayMs = Math.max(1400L, (long)((float)totalScroll / 26.0f * 1000.0f));
+        long holdEndMs = 1100L;
+        long holdStartMs = 1400L;
+        long cycleMs = oneWayMs * 2L + holdEndMs + holdStartMs;
+        long posInCycle = elapsed % cycleMs;
+        float frac;
+        if (posInCycle < oneWayMs) {
+            float t = (float)posInCycle / (float)oneWayMs;
+            frac = 0.5f - 0.5f * (float)Math.cos((double)t * Math.PI);
+        } else if (posInCycle < oneWayMs + holdEndMs) {
+            frac = 1.0f;
+        } else if (posInCycle < oneWayMs * 2L + holdEndMs) {
+            float t = (float)(posInCycle - oneWayMs - holdEndMs) / (float)oneWayMs;
+            frac = 0.5f + 0.5f * (float)Math.cos((double)t * Math.PI);
+        } else {
+            frac = 0.0f;
+        }
+        int scrollOffset = Math.round(frac * (float)totalScroll);
         this.drawClippedText(context, textRenderer, text, x, y, maxWidth, color, scrollOffset, isTitle);
     }
 

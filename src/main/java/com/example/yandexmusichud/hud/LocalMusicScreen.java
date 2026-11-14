@@ -15,7 +15,6 @@ import net.minecraft.class_2561;
 import net.minecraft.class_2960;
 import net.minecraft.class_310;
 import net.minecraft.class_332;
-import net.minecraft.class_342;
 import net.minecraft.class_3532;
 import net.minecraft.class_437;
 import org.lwjgl.glfw.GLFW;
@@ -24,7 +23,7 @@ public class LocalMusicScreen extends class_437 {
     private static final class_2960 TEX_VINYL = class_2960.method_60655("yandexmusichud", "textures/gui/radial/vinyl_record.png");
     private static final class_2960 TEX_SPINDLE = class_2960.method_60655("yandexmusichud", "textures/gui/radial/vinyl_spindle.png");
     private final class_437 parent;
-    private class_342 searchField;
+    private ModernTextFieldWidget searchField;
     private final List<LocalMusicTrack> filteredTracks = new ArrayList<>();
     private int scrollOffset = 0;
     private int maxScroll = 0;
@@ -49,8 +48,7 @@ public class LocalMusicScreen extends class_437 {
         int panelY = 20;
 
         int searchW = panelW - 170;
-        this.searchField = new class_342(this.field_22793, panelX + 10, panelY + 28, searchW, 18, (class_2561)class_2561.method_43470("Поиск..."));
-        this.searchField.method_47404((class_2561)class_2561.method_43470("🔍 Поиск по названию или автору..."));
+        this.searchField = new ModernTextFieldWidget(this.field_22793, panelX + 10, panelY + 28, searchW, 18, (class_2561)class_2561.method_43470("Поиск...")).setPlaceholder("🔍 Поиск по названию или автору...");
         this.searchField.method_1863(this::updateFilteredList);
         this.method_37063(this.searchField);
 

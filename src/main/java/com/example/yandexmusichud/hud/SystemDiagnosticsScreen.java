@@ -643,21 +643,28 @@ extends class_437 {
                     geniusPing = SystemDiagnosticsScreen.pingUrlTimed("https://api.genius.com/search?q=test", 3500);
                 }
                 long neteasePing = SystemDiagnosticsScreen.pingUrlTimed("https://music.163.com", 3500);
+                long kugouPing = SystemDiagnosticsScreen.pingUrlTimed("http://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=test&duration=180000", 3500);
+                long qqPing = SystemDiagnosticsScreen.pingUrlTimed("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=test&format=json", 3500);
+                boolean liveDspActive = lm != null && state != null && (lm.isTrackOnTheFly(state) || lm.isLiveAudioGenerating());
+                String liveDspLabel = liveDspActive ? "Активен (генерация на лету)" : "Готов (резерв в реальном времени)";
                 StringBuilder lyricsLog = new StringBuilder();
                 lyricsLog.append("LRCLIB API: ").append(lrclibPing >= 0L ? lrclibPing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");
                 lyricsLog.append("Yandex Music API: ").append(yandexPing >= 0L ? yandexPing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");
+                lyricsLog.append("Kugou Karaoke API: ").append(kugouPing >= 0L ? kugouPing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");
+                lyricsLog.append("QQ Music API: ").append(qqPing >= 0L ? qqPing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");
                 lyricsLog.append("Genius Lyrics: ").append(geniusPing >= 0L ? geniusPing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");
                 lyricsLog.append("NetEase 163: ").append(neteasePing >= 0L ? neteasePing + " ms (Доступен)" : "TIMEOUT / Ошибка").append("\n");
+                lyricsLog.append("On-The-Fly Live Audio DSP: ").append(liveDspLabel).append("\n");
                 lyricsLog.append("Active Track Lyrics: ").append(hasCurrentLyrics ? "Успешно загружен (" + currentLines.size() + " строк)" : "Ожидает загрузки / не найден");
                 lyricsItem.detailedLog = lyricsLog.toString();
-                if (hasCurrentLyrics || lrclibPing >= 0L) {
+                if (hasCurrentLyrics || lrclibPing >= 0L || kugouPing >= 0L || qqPing >= 0L) {
                     lyricsItem.status = Status.OK;
-                    lyricsItem.message = "Серверы субтитров доступны (LRCLIB: " + (lrclibPing >= 0L ? lrclibPing + "мс" : "—") + ", Yandex: " + (yandexPing >= 0L ? yandexPing + "мс" : "—") + ").";
+                    lyricsItem.message = "9-провайдерный консенсус активен (LRCLIB: " + (lrclibPing >= 0L ? lrclibPing + "мс" : "—") + ", Kugou: " + (kugouPing >= 0L ? kugouPing + "мс" : "—") + ", QQ: " + (qqPing >= 0L ? qqPing + "мс" : "—") + ").";
                     lyricsItem.solution = "";
                 } else {
                     lyricsItem.status = Status.WARNING;
-                    lyricsItem.message = "Сервер синхронизированных текстов LRCLIB недоступен (тайм-аут).";
-                    lyricsItem.solution = "Положите .lrc файл в config/yandexmusichud/lyrics/ или проверьте подключение к lrclib.net.";
+                    lyricsItem.message = "Серверы синхронизированных текстов недоступны — активен On-The-Fly Live DSP.";
+                    lyricsItem.solution = "Положите .lrc файл в config/yandexmusichud/lyrics/ или используйте генерацию на лету.";
                     lyricsItem.actionButtonText = "🔄 Повторить";
                     lyricsItem.actionButtonAction = this::runDetailedDiagnostics;
                 }
@@ -687,10 +694,11 @@ extends class_437 {
                 cacheLog.append("Cached tracks count: ").append(cacheFiles).append("\n");
                 cacheLog.append("Total cache size: ").append(cacheBytes / 1024L).append(" KB (").append(cacheBytes).append(" bytes)\n");
                 cacheLog.append("Tempo Clock: StudioCascadeAligner & Adaptive PLL Sync Ready\n");
+                cacheLog.append("On-The-Fly Live Audio DSP: ").append(liveDspLabel).append("\n");
                 cacheLog.append("Word Timestamps: Syllable Cadence & Elastic Time Warping Active");
                 cacheItem.detailedLog = cacheLog.toString();
                 cacheItem.status = Status.OK;
-                cacheItem.message = "Кэшировано треков: " + cacheFiles + " (" + cacheBytes / 1024L + " КБ). Движок каданса и PLL активен.";
+                cacheItem.message = "Кэшировано треков: " + cacheFiles + " (" + cacheBytes / 1024L + " КБ). Консенсус + Live DSP: " + liveDspLabel + ".";
                 cacheItem.solution = "";
                 FabricLoader fl = FabricLoader.getInstance();
                 String flVer = fl.getModContainer("fabricloader").map(m -> m.getMetadata().getVersion().getFriendlyString()).orElse("Unknown");

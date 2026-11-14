@@ -29,7 +29,6 @@ import net.minecraft.class_310;
 import net.minecraft.class_332;
 import net.minecraft.class_3414;
 import net.minecraft.class_3417;
-import net.minecraft.class_342;
 import net.minecraft.class_3532;
 import net.minecraft.class_364;
 import net.minecraft.class_437;
@@ -40,7 +39,7 @@ extends class_437 {
     private static final class_2960 TEX_SPINDLE = class_2960.method_60655("yandexmusichud", "textures/gui/radial/vinyl_spindle.png");
     private static final AtomicLong THUMB_ID_GEN = new AtomicLong(0L);
     private final class_437 parent;
-    private class_342 searchField;
+    private ModernTextFieldWidget searchField;
     private final List<FavoriteTrack> filteredTracks = new ArrayList<FavoriteTrack>();
     private static final Map<String, class_2960> THUMBNAIL_CACHE = new ConcurrentHashMap<String, class_2960>();
     private int scrollOffset = 0;
@@ -61,8 +60,7 @@ extends class_437 {
         int panelY = 20;
 
         int searchW = panelWidth - 178;
-        this.searchField = new class_342(this.field_22793, panelX + 10, panelY + 26, searchW, 18, (class_2561)class_2561.method_43470((String)"\u041f\u043e\u0438\u0441\u043a..."));
-        this.searchField.method_47404((class_2561)class_2561.method_43470((String)"\ud83d\udd0d \u041f\u043e\u0438\u0441\u043a \u043f\u043e \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044e \u0438\u043b\u0438 \u0430\u0432\u0442\u043e\u0440\u0443..."));
+        this.searchField = new ModernTextFieldWidget(this.field_22793, panelX + 10, panelY + 26, searchW, 18, (class_2561)class_2561.method_43470((String)"\u041f\u043e\u0438\u0441\u043a...")).setPlaceholder("\ud83d\udd0d \u041f\u043e\u0438\u0441\u043a \u043f\u043e \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044e \u0438\u043b\u0438 \u0430\u0432\u0442\u043e\u0440\u0443...");
         this.searchField.method_1863(this::updateFilteredList);
         this.method_37063(this.searchField);
 

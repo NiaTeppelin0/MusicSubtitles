@@ -44,6 +44,10 @@ public class LiveAudioSubtitleGenerator {
         this.lastCaptureTimestampMs = 0L;
     }
 
+    public boolean isCapturingOrActive() {
+        return this.captureInFlight || (this.lastCaptureTimestampMs > 0L && System.currentTimeMillis() - this.lastCaptureTimestampMs < 6000L);
+    }
+
     public void tickIfNeeded(TrackState state, String trackKey) {
         if (state == null || !state.isPlaying() || trackKey == null || trackKey.isEmpty() || this.captureInFlight) {
             return;

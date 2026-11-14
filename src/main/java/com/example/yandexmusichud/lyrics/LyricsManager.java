@@ -264,6 +264,17 @@ public class LyricsManager {
         return this.lyricsCache.get(this.getTrackKey(state));
     }
 
+    public boolean isTrackOnTheFly(TrackState state) {
+        if (state == null || !state.isActive() || state.title().isEmpty()) {
+            return false;
+        }
+        return this.onTheFlyTracks.contains(this.getTrackKey(state));
+    }
+
+    public boolean isLiveAudioGenerating() {
+        return this.liveAudioGenerator.isCapturingOrActive();
+    }
+
     public List<LyricLine> findLyrics(String artist, String title) {
         if (title == null || title.isBlank()) {
             return null;

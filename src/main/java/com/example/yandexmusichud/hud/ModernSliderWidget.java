@@ -103,6 +103,10 @@ extends class_357 {
         MusicHudRenderer.renderRoundedRect(context, sx, sy, sw, sh, r, cardBg);
         context.method_25294(sx + 4, sy + 1, sx + sw - 4, sy + 2, 0x16FFFFFF);
 
+        int accentAlpha = (int)(75.0f + this.hoverProgress * 180.0f);
+        int accentH = Math.max(4, sh - 8);
+        MusicHudRenderer.renderRoundedRect(context, sx + 2, sy + (sh - accentH) / 2, 2, accentH, 1, accentAlpha << 24 | 0x38BDF8);
+
         int idleBorderAlpha = 64;
         int borderAlpha = Math.min(240, (int)((float)idleBorderAlpha + this.hoverProgress * 155.0f));
         int borderRgb = ModernSliderWidget.lerpColor(0xFF334155, 0xFF38BDF8, this.hoverProgress) & 0xFFFFFF;
@@ -121,6 +125,9 @@ extends class_357 {
         if (filledWidth > 0) {
             int fillCol = ModernSliderWidget.lerpColor(0xEE0EA5E9, 0xFF38BDF8, this.hoverProgress);
             MusicHudRenderer.renderRoundedRect(context, trackX, trackY, filledWidth, trackH, 2, fillCol);
+            if (filledWidth >= 4) {
+                context.method_25294(trackX + 1, trackY, trackX + filledWidth - 1, trackY + 1, 0x44FFFFFF);
+            }
         }
 
         int knobX = trackX + filledWidth;
