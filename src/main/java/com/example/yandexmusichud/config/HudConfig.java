@@ -80,6 +80,7 @@ public class HudConfig {
     public boolean audioAnalysisEnabled = true;
     public boolean liveSubtitlesEnabled = true;
     public boolean liveWordByWord = true;
+    public String liveSttEngine = "AUTO";
     public String yandexMusicToken = "";
     public String yandexSignKey = "";
     public boolean twitchEnabled = false;
@@ -172,6 +173,9 @@ public class HudConfig {
                 }
                 if (HudConfig.INSTANCE.yandexSignKey == null) {
                     HudConfig.INSTANCE.yandexSignKey = "";
+                }
+                if (HudConfig.INSTANCE.liveSttEngine == null || HudConfig.INSTANCE.liveSttEngine.isEmpty()) {
+                    HudConfig.INSTANCE.liveSttEngine = "AUTO";
                 }
             }
             catch (Exception e) {

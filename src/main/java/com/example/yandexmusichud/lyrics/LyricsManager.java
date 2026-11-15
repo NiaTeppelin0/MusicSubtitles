@@ -1392,17 +1392,24 @@ public class LyricsManager {
         List<String> tokens = new ArrayList<String>();
         List<Long> rawDurs = new ArrayList<Long>();
         if (line.words != null && !line.words.isEmpty()) {
+            List<LyricLine.Word> validWords = new ArrayList<LyricLine.Word>(line.words.size());
             for (LyricLine.Word w : line.words) {
-                if (w == null || w.text() == null) {
-                    continue;
+                if (w != null && w.text() != null && !w.text().trim().isEmpty()) {
+                    validWords.add(w);
                 }
+            }
+            for (int i = 0; i < validWords.size(); ++i) {
+                LyricLine.Word w = validWords.get(i);
                 String tok = w.text().trim();
-                if (tok.isEmpty()) {
-                    continue;
-                }
                 tokens.add(tok);
-                long d = w.endMs() > w.startMs() ? w.endMs() - w.startMs() : 260L;
-                rawDurs.add(Math.max(120L, d));
+                long d = w.endMs() > w.startMs() ? w.endMs() - w.startMs() : 240L;
+                if (i + 1 < validWords.size()) {
+                    long gapStep = validWords.get(i + 1).startMs() - w.startMs();
+                    if (gapStep > 0L) {
+                        d = Math.min(700L, Math.max(d, gapStep));
+                    }
+                }
+                rawDurs.add(Math.max(115L, d));
             }
         }
         if (tokens.isEmpty()) {
@@ -1411,7 +1418,7 @@ public class LyricsManager {
                 if (tok != null && !tok.isEmpty()) {
                     tokens.add(tok);
                     long syl = Math.max(1L, StudioCascadeAligner.countSyllables(tok));
-                    rawDurs.add(110L + syl * 90L);
+                    rawDurs.add(105L + syl * 85L);
                 }
             }
         }
@@ -1423,12 +1430,12 @@ public class LyricsManager {
             totalRaw += d;
         }
         totalRaw = Math.max(1L, totalRaw);
-        long baseBudget = Math.max(360L, Math.min(1800L, totalRaw));
-        long backlogPenalty = Math.min(1100L, (long)Math.max(0, existingQueuedCount) * 145L);
-        long targetBudget = Math.max(320L, baseBudget - backlogPenalty);
+        long baseBudget = Math.max(320L, Math.min(1800L, totalRaw));
+        long backlogPenalty = Math.min(1150L, (long)Math.max(0, existingQueuedCount) * 140L);
+        long targetBudget = Math.max(280L, baseBudget - backlogPenalty);
         List<LiveWordCue> planned = new ArrayList<LiveWordCue>(tokens.size());
         for (int i = 0; i < tokens.size(); ++i) {
-            long pace = Math.max(135L, Math.min(520L, Math.round((double)rawDurs.get(i) / (double)totalRaw * (double)targetBudget)));
+            long pace = Math.max(115L, Math.min(480L, Math.round((double)rawDurs.get(i) / (double)totalRaw * (double)targetBudget)));
             planned.add(new LiveWordCue(trackKey, tokens.get(i), pace, nowMs));
         }
         return planned;

@@ -22,6 +22,7 @@ import com.example.yandexmusichud.stats.SessionStatsManager;
 import com.example.yandexmusichud.texture.CustomBackgroundManager;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Random;
 import java.util.function.Consumer;
@@ -995,13 +996,16 @@ extends class_437 {
             this.registerHelp(btnFont.method_46426(), btnFont.method_46427(), btnFont.method_25368(), btnFont.method_25364(), "Выбор шрифта", "Выбор шрифта субтитров с предпросмотром.", "Поддерживаются встроенные и пользовательские шрифты.");
 
             int liveBtnY = editorBtnY + 22;
-            ModernButtonWidget btnLiveStt = new ModernButtonWidget(contentX, liveBtnY, halfBtnW, 18, (class_2561)class_2561.method_43470("Распозн. речи: " + (HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aВКЛ" : "§cВЫКЛ")), b -> {
+            int w1 = (fullW - 8) * 32 / 100;
+            int w2 = (fullW - 8) * 36 / 100;
+            int w3 = fullW - w1 - w2 - 8;
+            ModernButtonWidget btnLiveStt = new ModernButtonWidget(contentX, liveBtnY, w1, 18, (class_2561)class_2561.method_43470("Речь: " + (HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aВКЛ" : "§cВЫКЛ")), b -> {
                 HudConfig.INSTANCE.liveSubtitlesEnabled = !HudConfig.INSTANCE.liveSubtitlesEnabled;
                 HudConfig.save();
                 if (YandexMusicHudMod.INSTANCE != null && YandexMusicHudMod.INSTANCE.getLyricsManager() != null) {
                     YandexMusicHudMod.INSTANCE.getLyricsManager().onLiveSubtitlesToggled(HudConfig.INSTANCE.liveSubtitlesEnabled);
                 }
-                b.method_25355((class_2561)class_2561.method_43470("Распозн. речи: " + (HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aВКЛ" : "§cВЫКЛ")));
+                b.method_25355((class_2561)class_2561.method_43470("Речь: " + (HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aВКЛ" : "§cВЫКЛ")));
                 b.setCustomBgColor(HudConfig.INSTANCE.liveSubtitlesEnabled ? -585408992 : -578093056);
                 this.triggerFeedback(HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aРаспознавание речи: ВКЛ" : "§cРаспознавание речи: ВЫКЛ", HudConfig.INSTANCE.liveSubtitlesEnabled ? 58879 : 0xFF5F56);
             });
@@ -1009,15 +1013,31 @@ extends class_437 {
             this.method_37063(btnLiveStt);
             this.registerHelp(btnLiveStt.method_46426(), btnLiveStt.method_46427(), btnLiveStt.method_25368(), btnLiveStt.method_25364(), "Распознавание речи", "Включает или полностью отключает живое распознавание (STT).", "Отключите, если не хотите субтитры по звуку без готового текста.");
 
-            ModernButtonWidget btnLiveWord = new ModernButtonWidget(contentX + halfBtnW + 4, liveBtnY, fullW - halfBtnW - 4, 18, (class_2561)class_2561.method_43470("По словам Live: " + (HudConfig.INSTANCE.liveWordByWord ? "§aВКЛ" : "§cВЫКЛ")), b -> {
+            ModernButtonWidget btnLiveWord = new ModernButtonWidget(contentX + w1 + 4, liveBtnY, w2, 18, (class_2561)class_2561.method_43470("Слова: " + (HudConfig.INSTANCE.liveWordByWord ? "§aВКЛ" : "§cВЫКЛ")), b -> {
                 HudConfig.INSTANCE.liveWordByWord = !HudConfig.INSTANCE.liveWordByWord;
                 HudConfig.save();
-                b.method_25355((class_2561)class_2561.method_43470("По словам Live: " + (HudConfig.INSTANCE.liveWordByWord ? "§aВКЛ" : "§cВЫКЛ")));
+                b.method_25355((class_2561)class_2561.method_43470("Слова: " + (HudConfig.INSTANCE.liveWordByWord ? "§aВКЛ" : "§cВЫКЛ")));
                 this.triggerFeedback(HudConfig.INSTANCE.liveWordByWord ? "§aПоказ по словам (Live): ВКЛ" : "§7Показ фразами (Live)", 58879);
             });
             btnLiveWord.setCustomBgColor(0xDD283448);
             this.method_37063(btnLiveWord);
             this.registerHelp(btnLiveWord.method_46426(), btnLiveWord.method_46427(), btnLiveWord.method_25368(), btnLiveWord.method_25364(), "По словам в реальном времени", "Выводит каждое распознанное слово по очереди в реальном времени.", "При ВЫКЛ показывает сразу целую фразу.");
+
+            String curEngine = HudConfig.INSTANCE.liveSttEngine != null ? HudConfig.INSTANCE.liveSttEngine.toUpperCase(Locale.ROOT) : "AUTO";
+            ModernButtonWidget btnLiveEngine = new ModernButtonWidget(contentX + w1 + 4 + w2 + 4, liveBtnY, w3, 18, (class_2561)class_2561.method_43470(HudEditScreen.formatEngineLabel(curEngine)), b -> {
+                String c = HudConfig.INSTANCE.liveSttEngine != null ? HudConfig.INSTANCE.liveSttEngine.toUpperCase(Locale.ROOT) : "AUTO";
+                String next = "AUTO".equals(c) ? "WHISPER" : ("WHISPER".equals(c) ? "GOOGLE" : "AUTO");
+                HudConfig.INSTANCE.liveSttEngine = next;
+                HudConfig.save();
+                b.method_25355((class_2561)class_2561.method_43470(HudEditScreen.formatEngineLabel(next)));
+                if ("GOOGLE".equals(next) && YandexMusicHudMod.INSTANCE != null && YandexMusicHudMod.INSTANCE.getLyricsManager() != null) {
+                    YandexMusicHudMod.INSTANCE.getLyricsManager().onLiveSubtitlesToggled(HudConfig.INSTANCE.liveSubtitlesEnabled);
+                }
+                this.triggerFeedback("§bДвижок распознавания: §f" + next, 58879);
+            });
+            btnLiveEngine.setCustomBgColor(0xDD223044);
+            this.method_37063(btnLiveEngine);
+            this.registerHelp(btnLiveEngine.method_46426(), btnLiveEngine.method_46427(), btnLiveEngine.method_25368(), btnLiveEngine.method_25364(), "Движок STT", "Авто: локальный Whisper + Google; Whisper: только локально; Google: облако.", "Авто даёт максимальную точность на музыке с вокалом.");
         } else if (this.currentTab == 2) {
             int pillW = (this.panelWidth - (this.dockSide != 0 ? 16 : 20) - 20) / 6;
             String[] targetNames = new String[]{"Конфиг", "Фон HUD", "Полоса", "Текст", "Подложка", "Караоке"};
@@ -3055,5 +3075,15 @@ extends class_437 {
             this.vy *= 0.96f;
             return ++this.age < this.maxLife;
         }
+    }
+
+    private static String formatEngineLabel(String engine) {
+        if ("WHISPER".equalsIgnoreCase(engine)) {
+            return "ИИ: §eWhisper";
+        }
+        if ("GOOGLE".equalsIgnoreCase(engine)) {
+            return "ИИ: §7Google";
+        }
+        return "ИИ: §bАвто";
     }
 }
