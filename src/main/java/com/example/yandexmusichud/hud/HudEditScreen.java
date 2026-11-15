@@ -1,5 +1,6 @@
 package com.example.yandexmusichud.hud;
 
+import com.example.yandexmusichud.YandexMusicHudMod;
 import com.example.yandexmusichud.config.HudConfig;
 import com.example.yandexmusichud.hud.ColorWheelWidget;
 import com.example.yandexmusichud.hud.FavoritesScreen;
@@ -66,7 +67,7 @@ extends class_437 {
     private int dockX = 0;
     private int dockY = 50;
     private int dockW = 34;
-    private int dockH = 204;
+    private int dockH = 226;
     private boolean flyoutOpen = true;
     private boolean draggingDock = false;
     private int dragDockStartX = 0;
@@ -82,7 +83,7 @@ extends class_437 {
     private int panelX = -1;
     private int panelY = -1;
     private int panelWidth = 332;
-    private int panelHeight = 224;
+    private int panelHeight = 246;
     private int currentTab = 0;
     private float tabIndicatorX = -1.0f;
     private float tabIndicatorW = -1.0f;
@@ -277,7 +278,7 @@ extends class_437 {
         this.dockSide = side;
         HudConfig.INSTANCE.configDockSide = side;
         HudConfig.save();
-        this.dockH = Math.min(204, this.field_22790 - 20);
+        this.dockH = Math.min(226, this.field_22790 - 20);
         this.dockW = 34;
         if (this.dockSide == 1) {
             this.dockX = 0;
@@ -315,7 +316,7 @@ extends class_437 {
         HudConfig.INSTANCE.configDockSide = 0;
         HudConfig.save();
         this.panelWidth = Math.min(332, this.field_22789 - 24);
-        this.panelHeight = Math.min(224, this.field_22790 - 28);
+        this.panelHeight = Math.min(246, this.field_22790 - 28);
         if (mouseX >= 0 && mouseY >= 0) {
             this.panelX = mouseX - this.panelWidth / 2;
             this.panelY = mouseY - 14;
@@ -373,7 +374,7 @@ extends class_437 {
         this.hudY = Math.max(0, Math.min(this.hudY, this.field_22790 - this.hudHeight));
         this.dockSide = HudConfig.INSTANCE.configDockSide;
         this.dockW = 34;
-        this.dockH = Math.min(204, this.field_22790 - 20);
+        this.dockH = Math.min(226, this.field_22790 - 20);
         this.dockY = (this.field_22790 - this.dockH) / 2;
         if (this.dockSide == 1) {
             this.dockX = 0;
@@ -389,7 +390,7 @@ extends class_437 {
             this.panelY = this.dockY;
         } else {
             this.panelWidth = Math.min(332, this.field_22789 - 24);
-            this.panelHeight = Math.min(224, this.field_22790 - 28);
+            this.panelHeight = Math.min(246, this.field_22790 - 28);
             if (this.panelX < 0 || this.panelY < 0 || this.panelX + this.panelWidth > this.field_22789 || this.panelY + this.panelHeight > this.field_22790) {
                 this.panelX = (this.field_22789 - this.panelWidth) / 2;
                 this.panelY = (this.field_22790 - this.panelHeight) / 2;
@@ -992,6 +993,31 @@ extends class_437 {
             btnFont.setCustomBgColor(0xDD283448);
             this.method_37063(btnFont);
             this.registerHelp(btnFont.method_46426(), btnFont.method_46427(), btnFont.method_25368(), btnFont.method_25364(), "Выбор шрифта", "Выбор шрифта субтитров с предпросмотром.", "Поддерживаются встроенные и пользовательские шрифты.");
+
+            int liveBtnY = editorBtnY + 22;
+            ModernButtonWidget btnLiveStt = new ModernButtonWidget(contentX, liveBtnY, halfBtnW, 18, (class_2561)class_2561.method_43470("Распозн. речи: " + (HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aВКЛ" : "§cВЫКЛ")), b -> {
+                HudConfig.INSTANCE.liveSubtitlesEnabled = !HudConfig.INSTANCE.liveSubtitlesEnabled;
+                HudConfig.save();
+                if (YandexMusicHudMod.INSTANCE != null && YandexMusicHudMod.INSTANCE.getLyricsManager() != null) {
+                    YandexMusicHudMod.INSTANCE.getLyricsManager().onLiveSubtitlesToggled(HudConfig.INSTANCE.liveSubtitlesEnabled);
+                }
+                b.method_25355((class_2561)class_2561.method_43470("Распозн. речи: " + (HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aВКЛ" : "§cВЫКЛ")));
+                b.setCustomBgColor(HudConfig.INSTANCE.liveSubtitlesEnabled ? -585408992 : -578093056);
+                this.triggerFeedback(HudConfig.INSTANCE.liveSubtitlesEnabled ? "§aРаспознавание речи: ВКЛ" : "§cРаспознавание речи: ВЫКЛ", HudConfig.INSTANCE.liveSubtitlesEnabled ? 58879 : 0xFF5F56);
+            });
+            btnLiveStt.setCustomBgColor(HudConfig.INSTANCE.liveSubtitlesEnabled ? -585408992 : -578093056);
+            this.method_37063(btnLiveStt);
+            this.registerHelp(btnLiveStt.method_46426(), btnLiveStt.method_46427(), btnLiveStt.method_25368(), btnLiveStt.method_25364(), "Распознавание речи", "Включает или полностью отключает живое распознавание (STT).", "Отключите, если не хотите субтитры по звуку без готового текста.");
+
+            ModernButtonWidget btnLiveWord = new ModernButtonWidget(contentX + halfBtnW + 4, liveBtnY, fullW - halfBtnW - 4, 18, (class_2561)class_2561.method_43470("По словам Live: " + (HudConfig.INSTANCE.liveWordByWord ? "§aВКЛ" : "§cВЫКЛ")), b -> {
+                HudConfig.INSTANCE.liveWordByWord = !HudConfig.INSTANCE.liveWordByWord;
+                HudConfig.save();
+                b.method_25355((class_2561)class_2561.method_43470("По словам Live: " + (HudConfig.INSTANCE.liveWordByWord ? "§aВКЛ" : "§cВЫКЛ")));
+                this.triggerFeedback(HudConfig.INSTANCE.liveWordByWord ? "§aПоказ по словам (Live): ВКЛ" : "§7Показ фразами (Live)", 58879);
+            });
+            btnLiveWord.setCustomBgColor(0xDD283448);
+            this.method_37063(btnLiveWord);
+            this.registerHelp(btnLiveWord.method_46426(), btnLiveWord.method_46427(), btnLiveWord.method_25368(), btnLiveWord.method_25364(), "По словам в реальном времени", "Выводит каждое распознанное слово по очереди в реальном времени.", "При ВЫКЛ показывает сразу целую фразу.");
         } else if (this.currentTab == 2) {
             int pillW = (this.panelWidth - (this.dockSide != 0 ? 16 : 20) - 20) / 6;
             String[] targetNames = new String[]{"Конфиг", "Фон HUD", "Полоса", "Текст", "Подложка", "Караоке"};
@@ -1447,10 +1473,10 @@ extends class_437 {
         if (this.draggingConfig && this.dockSide == 0) {
             if (this.panelX <= 32) {
                 MusicHudRenderer.renderRoundedRect(context, 0, 0, 4, this.field_22790, 0, 0xEE00E5FF);
-                MusicHudRenderer.renderRoundedRect(context, 0, Math.max(10, this.panelY), 34, 204, 7, 0x4400E5FF);
+                MusicHudRenderer.renderRoundedRect(context, 0, Math.max(10, this.panelY), 34, 226, 7, 0x4400E5FF);
             } else if (this.panelX + this.panelWidth >= this.field_22789 - 32) {
                 MusicHudRenderer.renderRoundedRect(context, this.field_22789 - 4, 0, 4, this.field_22790, 0, 0xEE00E5FF);
-                MusicHudRenderer.renderRoundedRect(context, this.field_22789 - 34, Math.max(10, this.panelY), 34, 204, 7, 0x4400E5FF);
+                MusicHudRenderer.renderRoundedRect(context, this.field_22789 - 34, Math.max(10, this.panelY), 34, 226, 7, 0x4400E5FF);
             }
         }
         int shadowOffX = (int)(-this.curTiltX * 7.0f);

@@ -1,5 +1,6 @@
 package com.example.yandexmusichud.lyrics;
 
+import com.example.yandexmusichud.config.HudConfig;
 import com.example.yandexmusichud.network.TrackState;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -17,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -25,14 +27,16 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class LiveAudioSubtitleGenerator {
     private static final String GOOGLE_SPEECH_BASE = "https://www.google.com/speech-api/v2/recognize?output=json&client=chromium&pFilter=0";
     private static final String HF_WHISPER_BASE = "https://hf-audio-whisper-large-v3.hf.space";
-    private static final int CAPTURE_DURATION_MS = 3800;
-    private static final long INTER_CAPTURE_GAP_MS = 120L;
+    private static final int CAPTURE_DURATION_MS = 2000;
+    private static final long INTER_CAPTURE_GAP_MS = 20L;
+    private static final long MAX_RESULT_STALENESS_MS = 5200L;
     private static final Pattern MULTI_SPACE = Pattern.compile("\\s+");
     private static final Pattern EDGE_PUNCT = Pattern.compile("^[\\p{Punct}\\s]+|[\\p{Punct}\\s]+$");
     private static final Set<String> HALLUCINATION_PHRASES = Set.of(
@@ -48,12 +52,17 @@ public class LiveAudioSubtitleGenerator {
         "thank you",
         "bye",
         "music",
+        "music playing",
         "субтитры",
         "субтитры создавал",
+        "субтитры сделал",
         "редактор субтитров",
         "продолжение следует",
         "подписывайтесь",
+        "подпишись на канал",
+        "подписывайтесь на канал",
         "спасибо за просмотр",
+        "благодарю за просмотр",
         "ставьте лайк",
         "музыка",
         "dimatorzok"
@@ -69,20 +78,23 @@ public class LiveAudioSubtitleGenerator {
     private final HttpClient httpClient;
     private final ExecutorService sttExecutor;
     private final AtomicInteger sttInFlight = new AtomicInteger(0);
+    private final AtomicLong trackGeneration = new AtomicLong(0L);
     private volatile boolean captureInFlight = false;
     private volatile long lastCaptureTimestampMs = 0L;
     private volatile long lastCaptureEndedMs = 0L;
     private volatile String activeTrackKey = "";
     private volatile String stickyLang = "";
     private volatile String lastEmittedNorm = "";
+    private volatile List<String> lastEmittedWords = Collections.emptyList();
     private volatile long lastEmittedAtMs = 0L;
+    private volatile long lastEmittedCaptureMs = 0L;
     private volatile long whisperCooldownUntilMs = 0L;
     private volatile String statusLabel = "Ожидание трека";
 
     public LiveAudioSubtitleGenerator(LyricsManager lyricsManager) {
         this.lyricsManager = lyricsManager;
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(4)).build();
-        this.sttExecutor = Executors.newSingleThreadExecutor(r -> {
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+        this.sttExecutor = Executors.newFixedThreadPool(2, r -> {
             Thread t = new Thread(r, "MusicSubtitles-LiveSTT");
             t.setDaemon(true);
             return t;
@@ -90,23 +102,48 @@ public class LiveAudioSubtitleGenerator {
     }
 
     public void resetForTrack(String trackKey) {
+        this.trackGeneration.incrementAndGet();
         this.activeTrackKey = trackKey != null ? trackKey : "";
         this.stickyLang = "";
         this.lastEmittedNorm = "";
+        this.lastEmittedWords = Collections.emptyList();
         this.lastEmittedAtMs = 0L;
+        this.lastEmittedCaptureMs = 0L;
         this.lastCaptureTimestampMs = 0L;
         this.lastCaptureEndedMs = 0L;
         this.captureInFlight = false;
-        this.statusLabel = this.activeTrackKey.isEmpty() ? "Ожидание трека" : "Инициализация захвата";
+        this.statusLabel = !HudConfig.INSTANCE.liveSubtitlesEnabled
+            ? "Выкл"
+            : (this.activeTrackKey.isEmpty() ? "Ожидание трека" : "Инициализация захвата");
+    }
+
+    public void disableAndStop() {
+        boolean wasActive = this.captureInFlight || this.sttInFlight.get() > 0 || !this.activeTrackKey.isEmpty();
+        this.resetForTrack("");
+        this.statusLabel = "Выкл";
+        if (wasActive && this.lyricsManager != null) {
+            this.lyricsManager.getExecutor().execute(() -> {
+                try {
+                    int port = this.lyricsManager.resolveHelperPort();
+                    if (port > 0) {
+                        LyricsManager.httpPost("http://127.0.0.1:" + port + "/capture/stop", "", 800);
+                    }
+                } catch (Exception ignored) {
+                }
+            });
+        }
     }
 
     public boolean isCapturingOrActive() {
+        if (!HudConfig.INSTANCE.liveSubtitlesEnabled) {
+            return false;
+        }
         long now = System.currentTimeMillis();
         return this.captureInFlight || this.sttInFlight.get() > 0 || (this.lastCaptureTimestampMs > 0L && now - this.lastCaptureTimestampMs < 6500L);
     }
 
     public String getStatusLabel() {
-        return this.statusLabel;
+        return HudConfig.INSTANCE.liveSubtitlesEnabled ? this.statusLabel : "Выкл";
     }
 
     public void shutdown() {
@@ -114,6 +151,12 @@ public class LiveAudioSubtitleGenerator {
     }
 
     public void tickIfNeeded(TrackState state, String trackKey) {
+        if (!HudConfig.INSTANCE.liveSubtitlesEnabled) {
+            if (this.captureInFlight || !this.activeTrackKey.isEmpty()) {
+                this.disableAndStop();
+            }
+            return;
+        }
         if (state == null || !state.isPlaying() || trackKey == null || trackKey.isEmpty() || this.captureInFlight) {
             return;
         }
@@ -127,16 +170,20 @@ public class LiveAudioSubtitleGenerator {
         if (this.lastCaptureEndedMs > 0L && now - this.lastCaptureEndedMs < INTER_CAPTURE_GAP_MS) {
             return;
         }
-        if (this.lastCaptureTimestampMs > 0L && now - this.lastCaptureTimestampMs < 600L) {
+        if (this.lastCaptureTimestampMs > 0L && now - this.lastCaptureTimestampMs < 350L) {
             return;
         }
+        long gen = this.trackGeneration.get();
         this.captureInFlight = true;
         this.lastCaptureTimestampMs = now;
-        this.lyricsManager.getExecutor().execute(() -> this.captureLoop(state, trackKey));
+        this.lyricsManager.getExecutor().execute(() -> this.captureLoop(state, trackKey, gen));
     }
 
-    private void captureLoop(TrackState state, String trackKey) {
+    private void captureLoop(TrackState state, String trackKey, long gen) {
         try {
+            if (!HudConfig.INSTANCE.liveSubtitlesEnabled || gen != this.trackGeneration.get()) {
+                return;
+            }
             int port = this.lyricsManager.resolveHelperPort();
             if (port <= 0) {
                 this.statusLabel = "Helper не запущен";
@@ -144,36 +191,45 @@ public class LiveAudioSubtitleGenerator {
                 return;
             }
             String helperBase = "http://127.0.0.1:" + port;
-            String startResp = LyricsManager.httpPost(helperBase + "/capture/start", "{\"durationMs\":" + CAPTURE_DURATION_MS + "}", 2000);
+            String startResp = LyricsManager.httpPost(helperBase + "/capture/start", "{\"durationMs\":" + CAPTURE_DURATION_MS + "}", 1500);
             if (startResp == null) {
                 this.statusLabel = "Захват занят / недоступен";
-                this.lastCaptureEndedMs = System.currentTimeMillis() + 900L;
+                this.lastCaptureEndedMs = System.currentTimeMillis() + 700L;
                 return;
             }
             this.statusLabel = "Слушаю аудио...";
             long captureStartPos = state.getInterpolatedPositionMs();
-            for (int elapsed = 0; elapsed < CAPTURE_DURATION_MS + 220; elapsed += 120) {
-                if (!trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
-                    LyricsManager.httpPost(helperBase + "/capture/stop", "", 1000);
-                    this.statusLabel = "Пауза / смена трека";
+            for (int elapsed = 0; elapsed < CAPTURE_DURATION_MS + 40; elapsed += 60) {
+                if (!HudConfig.INSTANCE.liveSubtitlesEnabled || gen != this.trackGeneration.get() || !trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
+                    LyricsManager.httpPost(helperBase + "/capture/stop", "", 800);
+                    this.statusLabel = HudConfig.INSTANCE.liveSubtitlesEnabled ? "Пауза / смена трека" : "Выкл";
                     return;
                 }
-                Thread.sleep(120L);
+                Thread.sleep(60L);
             }
-            if (!trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
+            if (!HudConfig.INSTANCE.liveSubtitlesEnabled || gen != this.trackGeneration.get() || !trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
                 return;
             }
-            byte[] wav = LyricsManager.httpGetBytes(helperBase + "/capture/result", 3000);
-            this.lastCaptureEndedMs = System.currentTimeMillis();
+            byte[] wav = LyricsManager.httpGetBytes(helperBase + "/capture/result", 2500);
+            if ((wav == null || wav.length <= 44) && HudConfig.INSTANCE.liveSubtitlesEnabled && gen == this.trackGeneration.get()) {
+                Thread.sleep(110L);
+                wav = LyricsManager.httpGetBytes(helperBase + "/capture/result", 2500);
+            }
+            long capturedAtMs = System.currentTimeMillis();
+            this.lastCaptureEndedMs = capturedAtMs;
+            if (!HudConfig.INSTANCE.liveSubtitlesEnabled || gen != this.trackGeneration.get() || !trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
+                return;
+            }
             if (wav == null || wav.length <= 44) {
                 this.statusLabel = "Пустой буфер аудио";
                 return;
             }
+            byte[] finalWav = wav;
             this.captureInFlight = false;
             this.sttInFlight.incrementAndGet();
             this.sttExecutor.execute(() -> {
                 try {
-                    this.processCapturedWav(wav, trackKey, state, captureStartPos, CAPTURE_DURATION_MS);
+                    this.processCapturedWav(finalWav, trackKey, state, captureStartPos, CAPTURE_DURATION_MS, gen, capturedAtMs);
                 } finally {
                     this.sttInFlight.decrementAndGet();
                 }
@@ -256,8 +312,12 @@ public class LiveAudioSubtitleGenerator {
         return new AnalyzedSpeech(best, smoothActivity, activeFraction);
     }
 
-    private void processCapturedWav(byte[] wav, String trackKey, TrackState state, long captureStartPos, long captureDurMs) {
-        if (!trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
+    private void processCapturedWav(byte[] wav, String trackKey, TrackState state, long captureStartPos, long captureDurMs, long gen, long capturedAtMs) {
+        if (!HudConfig.INSTANCE.liveSubtitlesEnabled || gen != this.trackGeneration.get() || !trackKey.equals(this.activeTrackKey) || !state.isPlaying()) {
+            return;
+        }
+        if (System.currentTimeMillis() - capturedAtMs > MAX_RESULT_STALENESS_MS) {
+            this.statusLabel = "Пропуск устаревшего фрагмента";
             return;
         }
         AcousticLagEstimator.Pcm pcm = AcousticLagEstimator.decodeWav(wav);
@@ -274,25 +334,78 @@ public class LiveAudioSubtitleGenerator {
             return;
         }
         RecognitionResult best = analyzed.result();
-        if (!trackKey.equals(this.activeTrackKey)) {
+        long now = System.currentTimeMillis();
+        if (!HudConfig.INSTANCE.liveSubtitlesEnabled || gen != this.trackGeneration.get() || !trackKey.equals(this.activeTrackKey) || now - capturedAtMs > MAX_RESULT_STALENESS_MS || capturedAtMs < this.lastEmittedCaptureMs) {
             return;
         }
         if (best.confidence() >= 0.75 && best.lang() != null && !best.lang().isEmpty()) {
             this.stickyLang = best.lang();
         }
-        String normKey = LiveAudioSubtitleGenerator.normalizeForDedupe(best.text());
-        long now = System.currentTimeMillis();
+        String[] rawTokens = MULTI_SPACE.split(best.text().trim());
+        List<String> newWords = new ArrayList<String>(rawTokens.length);
+        for (String tok : rawTokens) {
+            if (!tok.isEmpty()) {
+                newWords.add(tok);
+            }
+        }
+        if (now - this.lastEmittedAtMs <= 4200L && !this.lastEmittedWords.isEmpty()) {
+            newWords = LiveAudioSubtitleGenerator.trimOverlappingWords(this.lastEmittedWords, newWords);
+        }
+        if (newWords.isEmpty()) {
+            return;
+        }
+        String emitText = String.join(" ", newWords);
+        String normKey = LiveAudioSubtitleGenerator.normalizeForDedupe(emitText);
         if (normKey.isEmpty() || (normKey.equals(this.lastEmittedNorm) && now - this.lastEmittedAtMs < 6500L)) {
             return;
         }
         this.lastEmittedNorm = normKey;
+        this.lastEmittedWords = newWords;
         this.lastEmittedAtMs = now;
+        this.lastEmittedCaptureMs = capturedAtMs;
         this.statusLabel = "STT OK [" + best.lang() + "]";
 
-        LyricLine synthesized = this.buildTimedLine(best.text(), analyzed.smoothActivity(), captureStartPos, captureDurMs);
+        LyricLine synthesized = this.buildTimedLine(emitText, analyzed.smoothActivity(), captureStartPos, captureDurMs);
         if (synthesized != null) {
             this.lyricsManager.appendGeneratedLiveLine(trackKey, synthesized);
         }
+    }
+
+    public static List<String> trimOverlappingWords(List<String> previousWords, List<String> newWords) {
+        if (newWords == null || newWords.isEmpty()) {
+            return Collections.emptyList();
+        }
+        if (previousWords == null || previousWords.isEmpty()) {
+            return new ArrayList<String>(newWords);
+        }
+        int maxK = Math.min(3, Math.min(previousWords.size(), newWords.size()));
+        int overlap = 0;
+        for (int k = maxK; k >= 1; --k) {
+            boolean allMatch = true;
+            int strongCount = 0;
+            for (int i = 0; i < k; ++i) {
+                String p = LiveAudioSubtitleGenerator.normalizeForDedupe(previousWords.get(previousWords.size() - k + i));
+                String n = LiveAudioSubtitleGenerator.normalizeForDedupe(newWords.get(i));
+                if (p.isEmpty() || !p.equals(n)) {
+                    allMatch = false;
+                    break;
+                }
+                if (n.length() >= 3) {
+                    ++strongCount;
+                }
+            }
+            if (allMatch && (k >= 2 || strongCount >= 1)) {
+                overlap = k;
+                break;
+            }
+        }
+        if (overlap <= 0) {
+            return new ArrayList<String>(newWords);
+        }
+        if (overlap >= newWords.size()) {
+            return Collections.emptyList();
+        }
+        return new ArrayList<String>(newWords.subList(overlap, newWords.size()));
     }
 
     private RecognitionResult recognizeBest(byte[] speechPcm16, float[] rawSamples, int sampleRate, String primaryLang, String secondaryLang, double rawRms, double activeFraction) {
@@ -308,15 +421,15 @@ public class LiveAudioSubtitleGenerator {
                 best = secRes;
             }
         }
-        if (best != null) {
-            return best;
-        }
-        if (rawRms > 0.0025 && activeFraction >= 0.12) {
+        if ((best == null || best.confidence() < 0.70) && rawRms > 0.0020 && activeFraction >= 0.10) {
             byte[] fullBandPcm16 = LiveAudioSubtitleGenerator.encodeNormalizedPcm16(rawSamples);
             RecognitionResult rawRes = this.queryGoogleSpeechValidated(fullBandPcm16, sampleRate, primaryLang);
-            if (rawRes != null) {
-                return rawRes;
+            if (LiveAudioSubtitleGenerator.scoreCandidate(rawRes) > LiveAudioSubtitleGenerator.scoreCandidate(best)) {
+                best = rawRes;
             }
+        }
+        if (best != null) {
+            return best;
         }
         long now = System.currentTimeMillis();
         if (activeFraction >= 0.25 && rawRms > 0.003 && now >= this.whisperCooldownUntilMs) {
@@ -429,7 +542,7 @@ public class LiveAudioSubtitleGenerator {
 
             HttpRequest upReq = HttpRequest.newBuilder()
                 .uri(URI.create(HF_WHISPER_BASE + "/gradio_api/upload"))
-                .timeout(Duration.ofSeconds(8))
+                .timeout(Duration.ofSeconds(4))
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(baos.toByteArray()))
                 .build();
@@ -457,7 +570,7 @@ public class LiveAudioSubtitleGenerator {
 
             HttpRequest callReq = HttpRequest.newBuilder()
                 .uri(URI.create(HF_WHISPER_BASE + "/gradio_api/call/transcribe"))
-                .timeout(Duration.ofSeconds(8))
+                .timeout(Duration.ofSeconds(4))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(callBody.toString(), StandardCharsets.UTF_8))
                 .build();
@@ -475,7 +588,7 @@ public class LiveAudioSubtitleGenerator {
 
             HttpRequest sseReq = HttpRequest.newBuilder()
                 .uri(URI.create(HF_WHISPER_BASE + "/gradio_api/call/transcribe/" + eventId))
-                .timeout(Duration.ofSeconds(14))
+                .timeout(Duration.ofSeconds(5))
                 .GET()
                 .build();
             HttpResponse<String> sseResp = this.httpClient.send(sseReq, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));

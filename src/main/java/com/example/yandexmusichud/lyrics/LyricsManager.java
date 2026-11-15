@@ -40,6 +40,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -108,6 +109,10 @@ public class LyricsManager {
     private final Set<String> realSyncedTracks = Collections.newSetFromMap(new ConcurrentHashMap());
     private final Set<String> onTheFlyTracks = Collections.newSetFromMap(new ConcurrentHashMap());
     private final LiveAudioSubtitleGenerator liveAudioGenerator = new LiveAudioSubtitleGenerator(this);
+    public record LiveWordCue(String trackKey, String wordText, long paceMs, long queuedAtMs) {
+    }
+    private final ConcurrentLinkedDeque<LiveWordCue> liveWordQueue = new ConcurrentLinkedDeque<LiveWordCue>();
+    private volatile long nextLiveWordReleaseAtMs = 0L;
     private final AtomicInteger acousticMismatchStrikes = new AtomicInteger(0);
     private volatile long lastAcousticCheckTime = 0L;
     private volatile boolean isAcousticChecking = false;
@@ -142,15 +147,21 @@ public class LyricsManager {
     private static final Pattern FEAT_SUFFIX_PATTERN = Pattern.compile("(?i)\\s*(?:feat\\.?|ft\\.?|featuring)\\s+.*$");
     private static final Pattern ARTIST_SEP_PATTERN = Pattern.compile("(?i)\\s*(?:,|&|x|\\+)\\s*");
 
+    private void clearBubbleAndLiveWordState() {
+        this.liveWordQueue.clear();
+        this.nextLiveWordReleaseAtMs = 0L;
+        this.activeBubbles.clear();
+        this.lastSpawnedLine = null;
+        this.lastSpawnedSprintChunk = null;
+        this.cachedSprintLine = null;
+        this.cachedSprintChunks.clear();
+    }
+
     public void disableCurrentTrack() {
         if (this.currentTrackKey != null && !this.currentTrackKey.isEmpty()) {
             this.disabledTracks.add(this.currentTrackKey);
             this.mismatchedTracks.remove(this.currentTrackKey);
-            this.activeBubbles.clear();
-            this.lastSpawnedLine = null;
-            this.lastSpawnedSprintChunk = null;
-            this.cachedSprintLine = null;
-            this.cachedSprintChunks.clear();
+            this.clearBubbleAndLiveWordState();
         }
     }
 
@@ -164,11 +175,7 @@ public class LyricsManager {
             this.acousticMismatchStrikes.set(0);
             this.sttVerifyPassesDone = 0;
             this.sttVerifyConfirmed = false;
-            this.activeBubbles.clear();
-            this.lastSpawnedLine = null;
-            this.lastSpawnedSprintChunk = null;
-            this.cachedSprintLine = null;
-            this.cachedSprintChunks.clear();
+            this.clearBubbleAndLiveWordState();
         }
     }
 
@@ -203,12 +210,27 @@ public class LyricsManager {
         synchronized (this.reliableLagSamples) {
             this.reliableLagSamples.clear();
         }
-        this.activeBubbles.clear();
-        this.lastSpawnedLine = null;
-        this.lastSpawnedSprintChunk = null;
-        this.cachedSprintLine = null;
-        this.cachedSprintChunks.clear();
+        this.clearBubbleAndLiveWordState();
         this.currentTrackKey = "";
+    }
+
+    public void onLiveSubtitlesToggled(boolean enabled) {
+        this.liveWordQueue.clear();
+        this.nextLiveWordReleaseAtMs = 0L;
+        this.activeBubbles.removeIf(b -> b.isLiveCaption);
+        if (!enabled) {
+            this.onTheFlyTracks.clear();
+            this.liveAudioGenerator.disableAndStop();
+        } else {
+            String key = this.currentTrackKey != null ? this.currentTrackKey : "";
+            this.liveAudioGenerator.resetForTrack(key);
+            if (!key.isEmpty() && !this.disabledTracks.contains(key)) {
+                List<LyricLine> existing = this.lyricsCache.get(key);
+                if (existing == null || existing.isEmpty()) {
+                    this.onTheFlyTracks.add(key);
+                }
+            }
+        }
     }
 
     public String resolveEffectiveMode(TrackState state) {
@@ -278,14 +300,14 @@ public class LyricsManager {
     }
 
     public boolean isTrackOnTheFly(TrackState state) {
-        if (state == null || !state.isActive() || state.title().isEmpty()) {
+        if (!HudConfig.INSTANCE.liveSubtitlesEnabled || state == null || !state.isActive() || state.title().isEmpty()) {
             return false;
         }
         return this.onTheFlyTracks.contains(this.getTrackKey(state));
     }
 
     public boolean isLiveAudioGenerating() {
-        return this.liveAudioGenerator.isCapturingOrActive();
+        return HudConfig.INSTANCE.liveSubtitlesEnabled && this.liveAudioGenerator.isCapturingOrActive();
     }
 
     public String getLiveAudioStatusLabel() {
@@ -362,6 +384,8 @@ public class LyricsManager {
     public void update(TrackState state, int screenWidth, int screenHeight) {
         boolean isSprinting;
         if (!HudConfig.INSTANCE.subtitlesEnabled) {
+            this.liveWordQueue.clear();
+            this.nextLiveWordReleaseAtMs = 0L;
             this.activeBubbles.clear();
             this.lastSpawnedLine = null;
             return;
@@ -376,6 +400,8 @@ public class LyricsManager {
         }
         if (state == null || !state.isActive() || state.title().isEmpty()) {
             this.lastKnownState = state;
+            this.liveWordQueue.clear();
+            this.nextLiveWordReleaseAtMs = 0L;
             if (!hasLiveBubbles) {
                 this.activeBubbles.clear();
             } else {
@@ -388,6 +414,8 @@ public class LyricsManager {
         String trackKey = this.getTrackKey(state);
         if (!trackKey.equals(this.currentTrackKey)) {
             this.onTheFlyTracks.remove(this.currentTrackKey);
+            this.liveWordQueue.clear();
+            this.nextLiveWordReleaseAtMs = 0L;
             this.liveAudioGenerator.resetForTrack(trackKey);
             this.currentTrackKey = trackKey;
             this.lastFetchedDurationMs = state.durationMs();
@@ -409,7 +437,7 @@ public class LyricsManager {
             }
             if (!this.autoShutoffTracks.contains(trackKey)) {
                 this.fetchLyricsAsync(state);
-            } else if (HudConfig.INSTANCE.audioAnalysisEnabled) {
+            } else if (HudConfig.INSTANCE.liveSubtitlesEnabled) {
                 this.onTheFlyTracks.add(trackKey);
             }
         } else if ((this.lastFetchedDurationMs <= 0L && state.durationMs() > 15000L || this.lastFetchedDurationMs > 15000L && state.durationMs() > 15000L && Math.abs(state.durationMs() - this.lastFetchedDurationMs) > 20000L) && !this.userSavedTracks.contains(trackKey)) {
@@ -434,6 +462,8 @@ public class LyricsManager {
             this.fetchLyricsAsync(state);
         }
         if (this.disabledTracks.contains(trackKey)) {
+            this.liveWordQueue.clear();
+            this.nextLiveWordReleaseAtMs = 0L;
             this.activeBubbles.removeIf(b -> !b.isLiveCaption);
             this.lastSpawnedLine = null;
             return;
@@ -453,6 +483,8 @@ public class LyricsManager {
         long currentPosMs = Math.max(0L, rawPosMs + (long)HudConfig.INSTANCE.subtitlesOffsetMs + (long)trackOffset + (long)this.getLiveAcousticOffsetMs() + PERCEPTUAL_LEAD_MS);
         this.activeBubbles.removeIf(b -> b.isExpired(currentPosMs, now));
         if (!state.isPlaying()) {
+            this.liveWordQueue.clear();
+            this.nextLiveWordReleaseAtMs = 0L;
             for (SubtitleBubble b : this.activeBubbles) {
                 if (!b.isLiveCaption) {
                     b.startFadeOutPause(now);
@@ -469,10 +501,26 @@ public class LyricsManager {
             this.lastSpawnedSprintChunk = null;
         }
         if (lines == null || lines.isEmpty()) {
-            if (state.isPlaying() && (this.onTheFlyTracks.contains(trackKey) || this.failedFetchTimes.containsKey(trackKey)) && !trackKey.equals(this.activeFetchTrackKey)) {
-                this.liveAudioGenerator.tickIfNeeded(state, trackKey);
+            if (!HudConfig.INSTANCE.liveSubtitlesEnabled) {
+                this.liveWordQueue.clear();
+                this.nextLiveWordReleaseAtMs = 0L;
+                this.activeBubbles.removeIf(b -> b.isLiveCaption);
+                if (this.liveAudioGenerator.isCapturingOrActive()) {
+                    this.liveAudioGenerator.disableAndStop();
+                }
+            } else {
+                if ((this.onTheFlyTracks.contains(trackKey) || this.failedFetchTimes.containsKey(trackKey)) && !trackKey.equals(this.activeFetchTrackKey)) {
+                    this.liveAudioGenerator.tickIfNeeded(state, trackKey);
+                }
+                if (HudConfig.INSTANCE.liveWordByWord) {
+                    this.drainLiveWordQueue(state, trackKey, now, screenWidth, screenHeight);
+                }
             }
             return;
+        }
+        if (!this.liveWordQueue.isEmpty()) {
+            this.liveWordQueue.clear();
+            this.nextLiveWordReleaseAtMs = 0L;
         }
         this.triggerLiveAcousticSupervisorIfNeeded(state, lines);
         LyricLine activeLine = null;
@@ -765,6 +813,9 @@ public class LyricsManager {
         }
         boolean isSprinting = physicallySprinting || (now - this.lastSprintActiveTime < 1000L);
         String mode = this.resolveEffectiveMode(this.lastKnownState);
+        if ("OFF".equalsIgnoreCase(mode)) {
+            return;
+        }
         if ("CHAT".equalsIgnoreCase(mode)) {
             this.postLineToChat(line, this.lastKnownState);
             return;
@@ -777,13 +828,13 @@ public class LyricsManager {
                 this.pushNewBubble(bubble);
                 return;
             }
-            this.spawn3DLiveBubble(line, isSprinting, dur);
+            this.spawn3DLiveBubble(line, isSprinting, dur, false);
         } else if ("WORLD_3D".equalsIgnoreCase(mode)) {
-            this.spawn3DLiveBubble(line, isSprinting, dur);
+            this.spawn3DLiveBubble(line, isSprinting, dur, false);
         } else if ("HUD_BOTTOM".equalsIgnoreCase(mode)) {
             this.spawn2DBottomLiveBubble(line, screenWidth, screenHeight, isSprinting, dur);
         } else {
-            this.spawn2DRandomLiveBubble(line, screenWidth, screenHeight, isSprinting, dur);
+            this.spawn2DRandomLiveBubble(line, screenWidth, screenHeight, isSprinting, dur, false);
         }
     }
 
@@ -805,7 +856,39 @@ public class LyricsManager {
         }
     }
 
-    private void spawn3DLiveBubble(LyricLine line, boolean isFastPaced, long dur) {
+    private void commitLiveBubble(SubtitleBubble bubble, boolean keepTrail) {
+        if (bubble == null) {
+            return;
+        }
+        if (!keepTrail) {
+            this.pushNewBubble(bubble);
+            return;
+        }
+        int maxTrail = Math.max(2, Math.min(8, HudConfig.INSTANCE.sprintWordsTrailLength));
+        int liveCount = 0;
+        for (SubtitleBubble existing : this.activeBubbles) {
+            if (existing.isLiveCaption) {
+                ++liveCount;
+            }
+        }
+        while (liveCount >= maxTrail) {
+            boolean removed = false;
+            for (SubtitleBubble existing : this.activeBubbles) {
+                if (existing.isLiveCaption) {
+                    this.activeBubbles.remove(existing);
+                    --liveCount;
+                    removed = true;
+                    break;
+                }
+            }
+            if (!removed) {
+                break;
+            }
+        }
+        this.activeBubbles.add(bubble);
+    }
+
+    private void spawn3DLiveBubble(LyricLine line, boolean isFastPaced, long dur, boolean keepTrail) {
         float baseDist;
         class_310 mc = class_310.method_1551();
         if (mc.field_1724 == null || mc.field_1773 == null) {
@@ -838,7 +921,7 @@ public class LyricsManager {
         SubtitleBubble bubble = new SubtitleBubble(line, spawnPos, rotation, false, isFastPaced);
         bubble.isLiveCaption = true;
         bubble.liveDurationMs = dur;
-        this.pushNewBubble(bubble);
+        this.commitLiveBubble(bubble, keepTrail);
     }
 
     private void spawn2DBottomLiveBubble(LyricLine line, int screenWidth, int screenHeight, boolean isFastPaced, long dur) {
@@ -864,7 +947,7 @@ public class LyricsManager {
         this.pushNewBubble(bubble);
     }
 
-    private void spawn2DRandomLiveBubble(LyricLine line, int screenWidth, int screenHeight, boolean isFastPaced, long dur) {
+    private void spawn2DRandomLiveBubble(LyricLine line, int screenWidth, int screenHeight, boolean isFastPaced, long dur, boolean keepTrail) {
         int paddingX = 80;
         int paddingY = 80;
         int minX = paddingX;
@@ -876,7 +959,7 @@ public class LyricsManager {
         SubtitleBubble bubble = new SubtitleBubble(line, x, y, isFastPaced);
         bubble.isLiveCaption = true;
         bubble.liveDurationMs = dur;
-        this.pushNewBubble(bubble);
+        this.commitLiveBubble(bubble, keepTrail);
     }
 
     private SubtitleBubble createBlockBubble(LyricLine line, boolean isFastPaced) {
@@ -1101,7 +1184,11 @@ public class LyricsManager {
                     this.autoCancelMismatchedLyrics(key, "\u043d\u0435\u0441\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0438\u0435 \u043c\u0435\u0442\u0430\u0434\u0430\u043d\u043d\u044b\u0445, \u0434\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u0438 \u0438\u043b\u0438 \u044f\u0437\u044b\u043a\u0430", true);
                 } else {
                     this.failedFetchTimes.put(key, System.currentTimeMillis());
-                    this.onTheFlyTracks.add(key);
+                    if (HudConfig.INSTANCE.liveSubtitlesEnabled) {
+                        this.onTheFlyTracks.add(key);
+                    } else {
+                        this.onTheFlyTracks.remove(key);
+                    }
                     this.lyricsCache.remove(key);
                     this.realSyncedTracks.remove(key);
                     if (key.equals(this.currentTrackKey)) {
@@ -1134,12 +1221,14 @@ public class LyricsManager {
         this.checkedMismatchTracks.remove(trackKey);
         this.autoShutoffTracks.add(trackKey);
         this.failedFetchTimes.put(trackKey, System.currentTimeMillis());
-        if (enableOnTheFly && HudConfig.INSTANCE.audioAnalysisEnabled) {
+        if (enableOnTheFly && HudConfig.INSTANCE.liveSubtitlesEnabled) {
             this.onTheFlyTracks.add(trackKey);
         } else {
             this.onTheFlyTracks.remove(trackKey);
         }
         if (trackKey.equals(this.currentTrackKey)) {
+            this.liveWordQueue.clear();
+            this.nextLiveWordReleaseAtMs = 0L;
             this.activeBubbles.removeIf(b -> !b.isLiveCaption);
             this.lastSpawnedLine = null;
             this.lastSpawnedSprintChunk = null;
@@ -1147,7 +1236,7 @@ public class LyricsManager {
             this.cachedSprintChunks.clear();
         }
         if (this.promptedMismatchTracks.add(trackKey)) {
-            this.sendAutoCancelNotification(reason, enableOnTheFly && HudConfig.INSTANCE.audioAnalysisEnabled);
+            this.sendAutoCancelNotification(reason, enableOnTheFly && HudConfig.INSTANCE.liveSubtitlesEnabled);
         }
     }
 
@@ -1167,7 +1256,7 @@ public class LyricsManager {
     }
 
     private void sendMismatchNotification() {
-        this.sendAutoCancelNotification("\u0440\u0430\u0441\u0445\u043e\u0436\u0434\u0435\u043d\u0438\u0435 \u0441 \u043f\u0435\u0441\u043d\u0435\u0439", HudConfig.INSTANCE.audioAnalysisEnabled);
+        this.sendAutoCancelNotification("\u0440\u0430\u0441\u0445\u043e\u0436\u0434\u0435\u043d\u0438\u0435 \u0441 \u043f\u0435\u0441\u043d\u0435\u0439", HudConfig.INSTANCE.liveSubtitlesEnabled);
     }
 
     public List<LyricLine> getCurrentTrackLyrics() {
@@ -1213,11 +1302,7 @@ public class LyricsManager {
                 String key = artist + "___" + title;
                 this.lyricsCache.put(key, lines);
             }
-            this.activeBubbles.clear();
-            this.lastSpawnedLine = null;
-            this.lastSpawnedSprintChunk = null;
-            this.cachedSprintLine = null;
-            this.cachedSprintChunks.clear();
+            this.clearBubbleAndLiveWordState();
         }
         if (lrcContent != null && !lrcContent.isBlank() && artist != null && title != null) {
             this.saveLyricsToDisk(artist, title, lrcContent);
@@ -1300,11 +1385,142 @@ public class LyricsManager {
         return null;
     }
 
+    public static List<LiveWordCue> planLiveWordCues(String trackKey, LyricLine line, int existingQueuedCount, long nowMs) {
+        if (trackKey == null || trackKey.isEmpty() || line == null || line.text == null || line.text.isBlank()) {
+            return Collections.emptyList();
+        }
+        List<String> tokens = new ArrayList<String>();
+        List<Long> rawDurs = new ArrayList<Long>();
+        if (line.words != null && !line.words.isEmpty()) {
+            for (LyricLine.Word w : line.words) {
+                if (w == null || w.text() == null) {
+                    continue;
+                }
+                String tok = w.text().trim();
+                if (tok.isEmpty()) {
+                    continue;
+                }
+                tokens.add(tok);
+                long d = w.endMs() > w.startMs() ? w.endMs() - w.startMs() : 260L;
+                rawDurs.add(Math.max(120L, d));
+            }
+        }
+        if (tokens.isEmpty()) {
+            String[] split = MULTI_SPACE_PATTERN.split(line.text.trim());
+            for (String tok : split) {
+                if (tok != null && !tok.isEmpty()) {
+                    tokens.add(tok);
+                    long syl = Math.max(1L, StudioCascadeAligner.countSyllables(tok));
+                    rawDurs.add(110L + syl * 90L);
+                }
+            }
+        }
+        if (tokens.isEmpty()) {
+            return Collections.emptyList();
+        }
+        long totalRaw = 0L;
+        for (long d : rawDurs) {
+            totalRaw += d;
+        }
+        totalRaw = Math.max(1L, totalRaw);
+        long baseBudget = Math.max(360L, Math.min(1800L, totalRaw));
+        long backlogPenalty = Math.min(1100L, (long)Math.max(0, existingQueuedCount) * 145L);
+        long targetBudget = Math.max(320L, baseBudget - backlogPenalty);
+        List<LiveWordCue> planned = new ArrayList<LiveWordCue>(tokens.size());
+        for (int i = 0; i < tokens.size(); ++i) {
+            long pace = Math.max(135L, Math.min(520L, Math.round((double)rawDurs.get(i) / (double)totalRaw * (double)targetBudget)));
+            planned.add(new LiveWordCue(trackKey, tokens.get(i), pace, nowMs));
+        }
+        return planned;
+    }
+
+    private void drainLiveWordQueue(TrackState state, String trackKey, long now, int screenWidth, int screenHeight) {
+        if (this.liveWordQueue.isEmpty() || !HudConfig.INSTANCE.liveSubtitlesEnabled || !HudConfig.INSTANCE.liveWordByWord || state == null || !state.isPlaying()) {
+            return;
+        }
+        while (!this.liveWordQueue.isEmpty()) {
+            LiveWordCue head = this.liveWordQueue.peekFirst();
+            if (head == null || !trackKey.equals(head.trackKey()) || now - head.queuedAtMs() > 4500L) {
+                this.liveWordQueue.pollFirst();
+            } else {
+                break;
+            }
+        }
+        if (this.liveWordQueue.isEmpty() || now < this.nextLiveWordReleaseAtMs) {
+            return;
+        }
+        LiveWordCue cue = this.liveWordQueue.pollFirst();
+        if (cue == null || cue.wordText().isEmpty()) {
+            return;
+        }
+        this.nextLiveWordReleaseAtMs = now + Math.max(120L, cue.paceMs());
+        String mode = this.resolveEffectiveMode(state);
+        if ("OFF".equalsIgnoreCase(mode)) {
+            return;
+        }
+        boolean singleSlotMode = "HUD_BOTTOM".equalsIgnoreCase(mode) || "WORLD_BLOCK".equalsIgnoreCase(mode) || "WORLD_SURFACE".equalsIgnoreCase(mode);
+        long holdDurMs = singleSlotMode
+            ? Math.max(950L, cue.paceMs() + 550L)
+            : Math.max(1250L, cue.paceMs() + 850L);
+        List<LyricLine.Word> singleWord = List.of(new LyricLine.Word(0L, Math.max(120L, cue.paceMs()), cue.wordText(), 0, cue.wordText().length()));
+        LyricLine wordLine = new LyricLine(0L, holdDurMs, cue.wordText(), singleWord);
+        this.spawnLiveWordBubble(wordLine, screenWidth, screenHeight, holdDurMs, mode);
+    }
+
+    private void spawnLiveWordBubble(LyricLine line, int screenWidth, int screenHeight, long dur, String mode) {
+        if ("CHAT".equalsIgnoreCase(mode)) {
+            this.postLineToChat(line, this.lastKnownState);
+            return;
+        }
+        if ("HUD_BOTTOM".equalsIgnoreCase(mode)) {
+            this.activeBubbles.removeIf(b -> b.isLiveCaption && b.worldPos == null);
+            this.spawn2DBottomLiveBubble(line, screenWidth, screenHeight, true, dur);
+        } else if ("WORLD_BLOCK".equalsIgnoreCase(mode) || "WORLD_SURFACE".equalsIgnoreCase(mode)) {
+            SubtitleBubble bubble = this.createBlockBubble(line, true);
+            if (bubble != null) {
+                this.activeBubbles.removeIf(b -> b.isLiveCaption && b.isSurfaceAttached);
+                bubble.isLiveCaption = true;
+                bubble.liveDurationMs = dur;
+                this.activeBubbles.add(bubble);
+                return;
+            }
+            this.spawn3DLiveBubble(line, true, dur, true);
+        } else if ("WORLD_3D".equalsIgnoreCase(mode)) {
+            this.spawn3DLiveBubble(line, true, dur, true);
+        } else {
+            this.spawn2DRandomLiveBubble(line, screenWidth, screenHeight, true, dur, true);
+        }
+    }
+
+    public int getPendingLiveWordCount() {
+        return this.liveWordQueue.size();
+    }
+
     public void appendGeneratedLiveLine(String trackKey, LyricLine line) {
-        if (line == null || line.text == null || line.text.isBlank()) {
+        if (!HudConfig.INSTANCE.liveSubtitlesEnabled || line == null || line.text == null || line.text.isBlank()) {
             return;
         }
         if (trackKey == null || !trackKey.equals(this.currentTrackKey) || this.realSyncedTracks.contains(trackKey) || this.disabledTracks.contains(trackKey)) {
+            return;
+        }
+        TrackState st = this.lastKnownState;
+        if (st == null || !st.isPlaying()) {
+            return;
+        }
+        String mode = this.resolveEffectiveMode(st);
+        if ("OFF".equalsIgnoreCase(mode)) {
+            return;
+        }
+        if (HudConfig.INSTANCE.liveWordByWord && !"CHAT".equalsIgnoreCase(mode)) {
+            List<LiveWordCue> cues = LyricsManager.planLiveWordCues(trackKey, line, this.liveWordQueue.size(), System.currentTimeMillis());
+            if (!cues.isEmpty()) {
+                while (this.liveWordQueue.size() > 14) {
+                    this.liveWordQueue.pollFirst();
+                }
+                for (LiveWordCue cue : cues) {
+                    this.liveWordQueue.addLast(cue);
+                }
+            }
             return;
         }
         long dur = Math.max(1200L, line.endMs - line.startMs);

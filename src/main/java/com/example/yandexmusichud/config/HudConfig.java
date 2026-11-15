@@ -78,6 +78,8 @@ public class HudConfig {
     public int radialLastSelectedIndex = 0;
     public boolean smartDuckingEnabled = true;
     public boolean audioAnalysisEnabled = true;
+    public boolean liveSubtitlesEnabled = true;
+    public boolean liveWordByWord = true;
     public String yandexMusicToken = "";
     public String yandexSignKey = "";
     public boolean twitchEnabled = false;
