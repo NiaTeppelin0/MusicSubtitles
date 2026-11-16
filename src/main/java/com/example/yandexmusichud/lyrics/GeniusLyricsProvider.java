@@ -138,11 +138,20 @@ public class GeniusLyricsProvider {
                 }
                 String artistNames = res.has("artist_names") && res.get("artist_names").isJsonPrimitive() ? res.get("artist_names").getAsString() : "";
                 String url = res.has("url") && res.get("url").isJsonPrimitive() ? res.get("url").getAsString() : "";
+                boolean isGeniusInstr = res.has("instrumental") && res.get("instrumental").isJsonPrimitive() && res.get("instrumental").getAsBoolean();
+                String lowerPrimaryArtist = primaryArtist.toLowerCase(Locale.ROOT);
+                String lowerUrl = url.toLowerCase(Locale.ROOT);
+                if (isGeniusInstr || lowerPrimaryArtist.contains("genius") && (lowerPrimaryArtist.contains("translation") || lowerPrimaryArtist.contains("romanization"))) {
+                    continue;
+                }
+                if (lowerUrl.contains("translations") || lowerUrl.contains("-romanized")) {
+                    continue;
+                }
                 if (url.isBlank() || LyricsConsensusEngine.hasVersionConflict(title, resTitle)) {
                     continue;
                 }
                 double tSim = GeniusLyricsProvider.computeStringSimilarity(title, resTitle);
-                if (tSim < 0.55) {
+                if (tSim < (hasTargetArtist ? 0.70 : 0.88)) {
                     continue;
                 }
                 String combinedCandArtist = !artistNames.isBlank() ? artistNames : primaryArtist;
@@ -151,13 +160,10 @@ public class GeniusLyricsProvider {
                     double pSim = LyricsConsensusEngine.computeArtistSimilarity(artist, primaryArtist);
                     double allSim = LyricsConsensusEngine.computeArtistSimilarity(artist, artistNames);
                     aSim = Math.max(pSim, allSim);
-                    if (aSim >= 0.0 && aSim < 0.35) {
+                    if (aSim < 0.45) {
                         continue;
                     }
-                    if (aSim < 0.0 && (tSim < 0.85 || !LyricsConsensusEngine.isSpecificTitle(title))) {
-                        continue;
-                    }
-                } else if (tSim < 0.72) {
+                } else if (!LyricsConsensusEngine.isSpecificTitle(title)) {
                     continue;
                 }
                 double score = hasTargetArtist && aSim >= 0.0 ? (tSim * 0.60 + aSim * 0.40) : tSim;
@@ -167,7 +173,7 @@ public class GeniusLyricsProvider {
                 }
             }
         }
-        return bestScore >= 0.60 ? bestSong : null;
+        return bestScore >= 0.70 ? bestSong : null;
     }
 
     private static List<String> extractBalancedDivs(String html, Pattern openPattern) {

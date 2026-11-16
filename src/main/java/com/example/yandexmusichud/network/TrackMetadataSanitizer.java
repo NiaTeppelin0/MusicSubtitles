@@ -134,13 +134,20 @@ public class TrackMetadataSanitizer {
 
         String searchTitle = cleanSearchText(t);
         String searchArtist = cleanSearchText(a);
+        if (isGenericArtist(searchArtist) || isGenericArtist(a)) {
+            searchArtist = "";
+        }
 
         String cleanTitle = cleanDisplayText(t);
         String cleanArtist = cleanDisplayText(a);
 
         if (cleanTitle.isEmpty() && !cleanArtist.isEmpty()) {
             cleanTitle = cleanArtist;
-            cleanArtist = "Музыка";
+            if (searchTitle.isEmpty()) {
+                searchTitle = cleanSearchText(a);
+            }
+            searchArtist = "";
+            cleanArtist = "\u041c\u0443\u0437\u044b\u043a\u0430";
         }
 
         String primaryArtist = extractPrimaryArtist(cleanArtist);
@@ -231,7 +238,8 @@ public class TrackMetadataSanitizer {
                s.equals("яндекс") || s.equals("яндекс браузер") || s.equals("яндекс.браузер") ||
                s.equals("media player") || s.equals("windows media player") || s.equals("vlc") ||
                s.equals("aimp") || s.equals("foobar2000") || s.equals("unknown") ||
-               s.equals("unknown artist") || s.equals("\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439 \u0438\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c") ||
+               s.equals("unknown artist") || s.equals("various artists") || s.equals("\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439 \u0438\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c") ||
+               s.equals("\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439 \u0430\u0432\u0442\u043e\u0440") || s.equals("\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439") || s.equals("\u0430\u0432\u0442\u043e\u0440 \u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043d") ||
                s.equals("\u043c\u043e\u044f \u043c\u0443\u0437\u044b\u043a\u0430") || s.equals("local") || s.equals("music") ||
                s.equals("7clouds") || s.equals("syrebralvibes") || s.equals("trap nation") ||
                s.equals("bass nation") || s.equals("chill nation") || s.equals("proximity") ||

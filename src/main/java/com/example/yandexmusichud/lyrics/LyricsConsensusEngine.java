@@ -141,7 +141,7 @@ public class LyricsConsensusEngine {
                 c.possibleMismatch = true;
             }
             if (!safeTitle.isEmpty() && c.titleSim >= 0.0) {
-                if (c.titleSim < 0.50) {
+                if (c.titleSim < 0.68) {
                     c.score -= 800.0;
                     c.possibleMismatch = true;
                 } else if (c.titleSim >= 0.85) {
@@ -153,21 +153,21 @@ public class LyricsConsensusEngine {
             long durDiffSecMeta = (l > 20L && c.sourceDurationMs > 20000L) ? Math.abs(c.sourceDurationMs / 1000L - l) : -1L;
             if (!safeArtist.isEmpty()) {
                 if (c.artistSim >= 0.0) {
-                    if (c.artistSim < 0.32) {
-                        boolean exactDurSpecific = c.titleSim >= 0.92 && LyricsConsensusEngine.isSpecificTitle(c.matchedTitle) && durDiffSecMeta >= 0L && durDiffSecMeta <= 2L;
-                        if (exactDurSpecific) {
-                            c.score -= 100.0;
-                        } else {
-                            c.score -= 850.0;
-                            c.possibleMismatch = true;
-                        }
+                    if (c.artistSim < 0.45) {
+                        c.score -= 900.0;
+                        c.possibleMismatch = true;
                     } else if (c.artistSim >= 0.78) {
                         c.score += 120.0;
                     } else {
                         c.score += 80.0 * c.artistSim;
                     }
                 } else {
-                    c.score -= 55.0;
+                    c.score -= 65.0;
+                }
+            } else {
+                if (!LyricsConsensusEngine.isSpecificTitle(safeTitle) || (c.titleSim >= 0.0 && c.titleSim < 0.86) || (l > 20L && (durDiffSecMeta < 0L || durDiffSecMeta > 4L))) {
+                    c.score -= 600.0;
+                    c.possibleMismatch = true;
                 }
             }
 
@@ -175,17 +175,19 @@ public class LyricsConsensusEngine {
             int candCyrillic = countCyrillic(sampleText);
             int candCjk = countCjk(sampleText);
             int candLatin = countLatin(sampleText);
+            int titleCyrillic = countCyrillic(safeTitle);
+            int titleLatin = countLatin(safeTitle);
 
-            if (targetCyrillic >= 3 && targetLatin <= 2 && candCyrillic == 0 && (candLatin >= 15 || candCjk >= 3)) {
-                c.score -= 700.0;
+            if ((targetCyrillic >= 3 && targetLatin <= 2 || titleCyrillic >= 3 && titleLatin <= 1) && candCyrillic == 0 && (candLatin >= 25 || candCjk >= 3)) {
+                c.score -= 750.0;
                 c.possibleMismatch = true;
             }
             if (targetCjk == 0 && candCjk >= 12 && (targetLatin >= 3 || targetCyrillic >= 2)) {
-                c.score -= 700.0;
+                c.score -= 750.0;
                 c.possibleMismatch = true;
             }
             if (targetCyrillic == 0 && targetCjk == 0 && targetLatin >= 4 && candCyrillic >= 25 && candLatin < candCyrillic) {
-                c.score -= 700.0;
+                c.score -= 750.0;
                 c.possibleMismatch = true;
             }
 
@@ -295,32 +297,49 @@ public class LyricsConsensusEngine {
 
         arrayList.sort((candidate, candidate2) -> Double.compare(candidate2.score, candidate.score));
         Candidate candidate6 = arrayList.get(0);
-        if (candidate6.score < 110.0) {
+        if (candidate6.score < 160.0) {
             return null;
         }
         if (candidate6.versionConflict) {
             return null;
         }
+        if (!safeTitle.isEmpty() && candidate6.titleSim >= 0.0 && candidate6.titleSim < 0.68) {
+            return null;
+        }
+        if (!safeArtist.isEmpty() && candidate6.artistSim >= 0.0 && candidate6.artistSim < 0.45) {
+            return null;
+        }
+        if (safeArtist.isEmpty() && !candidate6.hasCrossConsensus) {
+            long durDiffEmpty = (l > 20L && candidate6.sourceDurationMs > 20000L) ? Math.abs(candidate6.sourceDurationMs / 1000L - l) : -1L;
+            if (candidate6.matchedTitle.isEmpty() || candidate6.titleSim < 0.86 || !LyricsConsensusEngine.isSpecificTitle(safeTitle)) {
+                return null;
+            }
+            if (l > 20L && (durDiffEmpty < 0L || durDiffEmpty > 4L)) {
+                return null;
+            }
+        }
         if (candidate6.possibleMismatch && !candidate6.hasCrossConsensus) {
             return null;
         }
-        boolean fatalMetaMismatch = (!safeArtist.isEmpty() && candidate6.artistSim >= 0.0 && candidate6.artistSim < 0.25)
-            || (!safeTitle.isEmpty() && candidate6.titleSim >= 0.0 && candidate6.titleSim < 0.45);
-        if (candidate6.possibleMismatch && fatalMetaMismatch) {
+        boolean fatalMetaMismatch = (!safeArtist.isEmpty() && candidate6.artistSim >= 0.0 && candidate6.artistSim < 0.45)
+            || (!safeTitle.isEmpty() && candidate6.titleSim >= 0.0 && candidate6.titleSim < 0.68);
+        if (fatalMetaMismatch) {
             return null;
         }
         boolean isAsianFallback = "NETEASE".equalsIgnoreCase(candidate6.provider)
             || "KUGOU".equalsIgnoreCase(candidate6.provider)
             || "QQMUSIC".equalsIgnoreCase(candidate6.provider);
-        if (isAsianFallback && !candidate6.hasCrossConsensus) {
-            if (candidate6.score < 220.0) {
+        if (isAsianFallback) {
+            if (safeArtist.isEmpty()) {
                 return null;
             }
-            if (!safeArtist.isEmpty() && candidate6.artistSim < 0.45) {
-                return null;
-            }
-            if (!safeTitle.isEmpty() && candidate6.titleSim >= 0.0 && candidate6.titleSim < 0.72) {
-                return null;
+            if (!candidate6.hasCrossConsensus) {
+                if (candidate6.score < 220.0 || candidate6.artistSim < 0.50) {
+                    return null;
+                }
+                if (!safeTitle.isEmpty() && candidate6.titleSim >= 0.0 && candidate6.titleSim < 0.74) {
+                    return null;
+                }
             }
         }
         if ("OVH".equalsIgnoreCase(candidate6.provider) && !candidate6.hasCrossConsensus) {
@@ -328,8 +347,16 @@ public class LyricsConsensusEngine {
                 return null;
             }
         }
-        if (!candidate6.hasCrossConsensus && arrayList.size() > 1 && !candidate6.isSynced && candidate6.score < 190.0) {
-            return null;
+        if (!candidate6.hasCrossConsensus && !candidate6.isSynced) {
+            if (!safeTitle.isEmpty() && candidate6.titleSim >= 0.0 && candidate6.titleSim < 0.78) {
+                return null;
+            }
+            if (!safeArtist.isEmpty() && candidate6.artistSim >= 0.0 && candidate6.artistSim < 0.50) {
+                return null;
+            }
+            if (arrayList.size() > 1 && candidate6.score < 190.0) {
+                return null;
+            }
         }
         if (candidate6.isSynced && !candidate6.lines.isEmpty()) {
             candidate6.lines = LyricsConsensusEngine.fuseSyncedLines(candidate6, arrayList);
@@ -550,6 +577,9 @@ public class LyricsConsensusEngine {
     private static final Pattern VERSION_COVER_PATTERN = Pattern.compile("(?iu)(?:^|[\\s(\\[\\-])(?:cover|\u043a\u0430\u0432\u0435\u0440|parody|\u043f\u0430\u0440\u043e\u0434\u0438\u044f|tribute|ai\\s*cover)(?:$|[\\s)\\]\\-])");
     private static final Pattern VERSION_REMIX_PATTERN = Pattern.compile("(?iu)(?:^|[\\s(\\[\\-])(?:remix|rmx|\u0440\u0435\u043c\u0438\u043a\u0441|mashup|\u043c\u044d\u0448\u0430\u043f|vip\\s*mix|club\\s*mix|dub\\s*mix|bootleg)(?:$|[\\s)\\]\\-])");
     private static final Pattern VERSION_TEMPO_PATTERN = Pattern.compile("(?iu)(?:^|[\\s(\\[\\-])(?:sp(?:e|ed)\\s*up|nightcore|slowed(?:\\s*\\+?\\s*reverb)?)(?:$|[\\s)\\]\\-])");
+    private static final Pattern VERSION_TRANSLATION_PATTERN = Pattern.compile("(?iu)(?:^|[\\s(\\[\\-])(?:romanized|romanization|(?:english|russian|spanish|french|german)\\s+translation|\u043f\u0435\u0440\u0435\u0432\u043e\u0434|traducci\u00f3n)(?:$|[\\s)\\]\\-])");
+    private static final Pattern VERSION_LIVE_ACOUSTIC_PATTERN = Pattern.compile("(?iu)(?:[\\(\\[\\-]\\s*(?:live(?:\\s+(?:at|from|in|session|performance|version|recording))?|\u043a\u043e\u043d\u0446\u0435\u0440\u0442|unplugged|acoustic|\u0430\u043a\u0443\u0441\u0442\u0438\u043a\u0430)\\s*(?:[\\)\\]\\-]|$))|(?iu)\\s+(?:live\\s+(?:at|from|in|session|performance)|unplugged|acoustic\\s+version)$");
+    private static final Pattern VERSION_ALTERNATE_PATTERN = Pattern.compile("(?iu)(?:^|[\\s(\\[\\-])(?:parody|\u043f\u0430\u0440\u043e\u0434\u0438\u044f|freestyle|\u0444\u0440\u0438\u0441\u0442\u0430\u0439\u043b|8-?bit|chiptune|tribute|demo\\s*version)(?:$|[\\s)\\]\\-])");
     private static final Pattern ARTIST_NOISE_PATTERN = Pattern.compile("(?iu)\\s*(?:-\\s*(?:topic|\u0442\u0435\u043c\u0430)|official\\s*(?:channel|artist|music)?|vevo)\\s*$");
     private static final Pattern ARTIST_SPLIT_PATTERN = Pattern.compile("(?iu)\\s*(?:feat\\.?|ft\\.?|featuring|vs\\.?|and|&|,|/|\\u00d7|\\+)\\s*|\\s+x\\s+");
     private static final Set<String> COMMON_STOPWORDS = Set.of(
@@ -744,6 +774,41 @@ public class LyricsConsensusEngine {
         return LyricsConsensusEngine.normalize(folded);
     }
 
+    private static boolean isWholeWordSequenceContained(String shorter, String longer) {
+        if (shorter.isEmpty() || longer.length() < shorter.length()) {
+            return false;
+        }
+        String paddedShort = " " + shorter + " ";
+        String paddedLong = " " + longer + " ";
+        return paddedLong.contains(paddedShort);
+    }
+
+    private static double boundedSingleTokenLevenshtein(String a, String b) {
+        int la = a.length();
+        int lb = b.length();
+        if (la < 5 || lb < 5 || Math.abs(la - lb) > 2 || a.indexOf(' ') >= 0 || b.indexOf(' ') >= 0) {
+            return 0.0;
+        }
+        int[] prev = new int[lb + 1];
+        int[] curr = new int[lb + 1];
+        for (int j = 0; j <= lb; ++j) {
+            prev[j] = j;
+        }
+        for (int i = 1; i <= la; ++i) {
+            curr[0] = i;
+            char ca = a.charAt(i - 1);
+            for (int j = 1; j <= lb; ++j) {
+                int cost = ca == b.charAt(j - 1) ? 0 : 1;
+                curr[j] = Math.min(Math.min(curr[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] tmp = prev;
+            prev = curr;
+            curr = tmp;
+        }
+        double ratio = 1.0 - (double)prev[lb] / (double)Math.max(la, lb);
+        return ratio >= 0.85 ? ratio : 0.0;
+    }
+
     private static double computeSingleNormalizedSimilarity(String a, String b) {
         if (a.isEmpty() || b.isEmpty()) {
             return 0.0;
@@ -751,13 +816,17 @@ public class LyricsConsensusEngine {
         if (a.equals(b)) {
             return 1.0;
         }
-        if ((a.length() >= 3 && b.length() >= 3) && (a.contains(b) || b.contains(a))) {
+        if ((a.length() >= 3 && b.length() >= 3) && (LyricsConsensusEngine.isWholeWordSequenceContained(a, b) || LyricsConsensusEngine.isWholeWordSequenceContained(b, a))) {
             return (double)Math.min(a.length(), b.length()) / (double)Math.max(a.length(), b.length());
+        }
+        double lev = LyricsConsensusEngine.boundedSingleTokenLevenshtein(a, b);
+        if (lev > 0.0) {
+            return lev;
         }
         HashSet<String> wordsA = new HashSet<String>(Arrays.asList(WHITESPACE_PATTERN.split(a)));
         HashSet<String> wordsB = new HashSet<String>(Arrays.asList(WHITESPACE_PATTERN.split(b)));
-        wordsA.removeIf(w -> w.length() < 2 && (w.isEmpty() || w.codePointAt(0) <= 0x2E80));
-        wordsB.removeIf(w -> w.length() < 2 && (w.isEmpty() || w.codePointAt(0) <= 0x2E80));
+        wordsA.removeIf(String::isEmpty);
+        wordsB.removeIf(String::isEmpty);
         if (wordsA.isEmpty() || wordsB.isEmpty()) {
             return 0.0;
         }
@@ -804,25 +873,34 @@ public class LyricsConsensusEngine {
         String[] partsT = ARTIST_SPLIT_PATTERN.split(cleanT);
         String[] partsC = ARTIST_SPLIT_PATTERN.split(cleanC);
         double bestPair = 0.0;
-        for (String pt : partsT) {
+        double targetPrimaryBest = 0.0;
+        for (int ti = 0; ti < partsT.length; ++ti) {
+            String pt = partsT[ti];
             String nt = LyricsConsensusEngine.normalize(pt);
             if (nt.isEmpty()) continue;
-            for (String pc : partsC) {
+            for (int ci = 0; ci < partsC.length; ++ci) {
+                String pc = partsC[ci];
                 String nc = LyricsConsensusEngine.normalize(pc);
                 if (nc.isEmpty()) continue;
+                double sim;
                 if (nt.equals(nc)) {
-                    bestPair = Math.max(bestPair, partsT.length > 1 || partsC.length > 1 ? 0.90 : 1.0);
+                    sim = partsT.length > 1 || partsC.length > 1 ? 0.90 : 1.0;
+                } else if (nt.length() <= 2 || nc.length() <= 2) {
                     continue;
-                }
-                if (nt.length() <= 2 || nc.length() <= 2) {
-                    continue;
-                }
-                double sim = LyricsConsensusEngine.computeTitleSimilarity(pt, pc);
-                if (partsT.length > 1 || partsC.length > 1) {
-                    sim = Math.min(0.90, sim);
+                } else {
+                    sim = LyricsConsensusEngine.computeTitleSimilarity(pt, pc);
+                    if (partsT.length > 1 || partsC.length > 1) {
+                        sim = Math.min(0.90, sim);
+                    }
                 }
                 bestPair = Math.max(bestPair, sim);
+                if (ti == 0) {
+                    targetPrimaryBest = Math.max(targetPrimaryBest, sim);
+                }
             }
+        }
+        if (partsT.length > 1 && partsC.length > 1 && targetPrimaryBest < 0.45) {
+            bestPair = Math.min(bestPair, 0.38);
         }
         return Math.max(whole, bestPair);
     }
@@ -843,7 +921,27 @@ public class LyricsConsensusEngine {
         }
         boolean targRemix = VERSION_REMIX_PATTERN.matcher(targetTitle).find();
         boolean candRemix = VERSION_REMIX_PATTERN.matcher(candidateTitle).find();
-        return !targRemix && candRemix;
+        if (!targRemix && candRemix) {
+            return true;
+        }
+        boolean targTrans = VERSION_TRANSLATION_PATTERN.matcher(targetTitle).find();
+        boolean candTrans = VERSION_TRANSLATION_PATTERN.matcher(candidateTitle).find();
+        if (!targTrans && candTrans) {
+            return true;
+        }
+        boolean targLive = VERSION_LIVE_ACOUSTIC_PATTERN.matcher(targetTitle).find();
+        boolean candLive = VERSION_LIVE_ACOUSTIC_PATTERN.matcher(candidateTitle).find();
+        if (!targLive && candLive) {
+            return true;
+        }
+        boolean targAlt = VERSION_ALTERNATE_PATTERN.matcher(targetTitle).find();
+        boolean candAlt = VERSION_ALTERNATE_PATTERN.matcher(candidateTitle).find();
+        if (!targAlt && candAlt) {
+            return true;
+        }
+        boolean targTempo = VERSION_TEMPO_PATTERN.matcher(targetTitle).find();
+        boolean candTempo = VERSION_TEMPO_PATTERN.matcher(candidateTitle).find();
+        return !targTempo && candTempo;
     }
 
     public static boolean isSpecificTitle(String title) {
@@ -962,7 +1060,8 @@ public class LyricsConsensusEngine {
             }
         }
         int alnumLen = normHeard.replace(" ", "").length();
-        boolean confidentSpeech = confidence >= 0.78 && heardMeaningfulWords.size() >= 3 && alnumLen >= 13;
+        boolean confidentSpeech = (confidence >= 0.72 && heardMeaningfulWords.size() >= 3 && alnumLen >= 13)
+            || (confidence >= 0.64 && heardMeaningfulWords.size() >= 4 && alnumLen >= 16);
 
         Set<String> heardTrigrams = LyricsConsensusEngine.extractCharTrigrams(normHeard);
         HashSet<String> songMeaningfulTokens = new HashSet<String>();
@@ -1046,9 +1145,9 @@ public class LyricsConsensusEngine {
         int lyricsLat = LyricsConsensusEngine.countLatin(allSampleStr);
         int heardCyr = LyricsConsensusEngine.countCyrillic(heardText);
         int heardLat = LyricsConsensusEngine.countLatin(heardText);
-        boolean scriptContradiction = confidence >= 0.84 && heardMeaningfulWords.size() >= 3 && (
-            (heardCyr >= 15 && lyricsCyr == 0 && lyricsLat >= 20) ||
-            (heardLat >= 15 && lyricsLat <= 3 && lyricsCyr >= 25)
+        boolean scriptContradiction = confidence >= 0.72 && heardMeaningfulWords.size() >= 3 && (
+            (heardCyr >= 14 && lyricsCyr == 0 && lyricsLat >= 20) ||
+            (heardLat >= 14 && lyricsLat <= 3 && lyricsCyr >= 25)
         );
 
         boolean matchedLyrics = matchedWords >= 2 || longWordMatches >= 1 || bestLineCharOverlap >= 0.40;
