@@ -81,6 +81,7 @@ public class HudConfig {
     public boolean liveSubtitlesEnabled = true;
     public boolean liveWordByWord = true;
     public String liveSttEngine = "AUTO";
+    public String googleSpeechApiKey = "";
     public String yandexMusicToken = "";
     public String yandexSignKey = "";
     public boolean twitchEnabled = false;
@@ -175,6 +176,12 @@ public class HudConfig {
                     HudConfig.INSTANCE.yandexSignKey = "";
                 }
                 if (HudConfig.INSTANCE.liveSttEngine == null || HudConfig.INSTANCE.liveSttEngine.isEmpty()) {
+                    HudConfig.INSTANCE.liveSttEngine = "AUTO";
+                }
+                if (HudConfig.INSTANCE.googleSpeechApiKey == null) {
+                    HudConfig.INSTANCE.googleSpeechApiKey = "";
+                }
+                if ("GOOGLE".equalsIgnoreCase(HudConfig.INSTANCE.liveSttEngine) && HudConfig.INSTANCE.googleSpeechApiKey.isBlank()) {
                     HudConfig.INSTANCE.liveSttEngine = "AUTO";
                 }
             }

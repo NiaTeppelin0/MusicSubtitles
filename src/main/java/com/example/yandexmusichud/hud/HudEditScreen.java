@@ -1027,17 +1027,22 @@ extends class_437 {
             ModernButtonWidget btnLiveEngine = new ModernButtonWidget(contentX + w1 + 4 + w2 + 4, liveBtnY, w3, 18, (class_2561)class_2561.method_43470(HudEditScreen.formatEngineLabel(curEngine)), b -> {
                 String c = HudConfig.INSTANCE.liveSttEngine != null ? HudConfig.INSTANCE.liveSttEngine.toUpperCase(Locale.ROOT) : "AUTO";
                 String next = "AUTO".equals(c) ? "WHISPER" : ("WHISPER".equals(c) ? "GOOGLE" : "AUTO");
+                if ("GOOGLE".equals(next) && !com.example.yandexmusichud.lyrics.LiveAudioSubtitleGenerator.hasGoogleSpeechKey()) {
+                    next = "AUTO";
+                    this.triggerFeedback("\u00a7eДля Google STT нужен googleSpeechApiKey в конфиге; активен Whisper", 0xF59E0B);
+                } else {
+                    this.triggerFeedback("\u00a7bДвижок распознавания: \u00a7f" + next, 58879);
+                }
                 HudConfig.INSTANCE.liveSttEngine = next;
                 HudConfig.save();
                 b.method_25355((class_2561)class_2561.method_43470(HudEditScreen.formatEngineLabel(next)));
                 if ("GOOGLE".equals(next) && YandexMusicHudMod.INSTANCE != null && YandexMusicHudMod.INSTANCE.getLyricsManager() != null) {
                     YandexMusicHudMod.INSTANCE.getLyricsManager().onLiveSubtitlesToggled(HudConfig.INSTANCE.liveSubtitlesEnabled);
                 }
-                this.triggerFeedback("§bДвижок распознавания: §f" + next, 58879);
             });
             btnLiveEngine.setCustomBgColor(0xDD223044);
             this.method_37063(btnLiveEngine);
-            this.registerHelp(btnLiveEngine.method_46426(), btnLiveEngine.method_46427(), btnLiveEngine.method_25368(), btnLiveEngine.method_25364(), "Движок STT", "Авто: локальный Whisper + Google; Whisper: только локально; Google: облако.", "Авто даёт максимальную точность на музыке с вокалом.");
+            this.registerHelp(btnLiveEngine.method_46426(), btnLiveEngine.method_46427(), btnLiveEngine.method_25368(), btnLiveEngine.method_25364(), "Движок STT", "Авто/Whisper: локальный OpenBLAS Whisper без ключей; Google: ваш ключ в googleSpeechApiKey.", "Работает полностью локально без встроенных API-ключей.");
         } else if (this.currentTab == 2) {
             int pillW = (this.panelWidth - (this.dockSide != 0 ? 16 : 20) - 20) / 6;
             String[] targetNames = new String[]{"Конфиг", "Фон HUD", "Полоса", "Текст", "Подложка", "Караоке"};

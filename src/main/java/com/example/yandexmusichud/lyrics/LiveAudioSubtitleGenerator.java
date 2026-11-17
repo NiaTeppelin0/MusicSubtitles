@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 public class LiveAudioSubtitleGenerator {
-    private static final String GOOGLE_SPEECH_BASE = "https://www.google.com/speech-api/v2/recognize?output=json&client=chromium&pFilter=0";
+    private static final String GOOGLE_SPEECH_URL_PREFIX = "https://www.google.com/speech-api/v2/recognize?output=json&client=chromium&pFilter=0&key=";
     private static final int CAPTURE_DURATION_MS = 1800;
     private static final int SLIDING_TAIL_MS = 1400;
     private static final long INTER_CAPTURE_GAP_MS = 0L;
@@ -216,6 +216,12 @@ public class LiveAudioSubtitleGenerator {
         this.lyricsManager.getExecutor().execute(() -> this.captureLoop(state, trackKey, gen));
     }
 
+    public static boolean hasGoogleSpeechKey() {
+        return HudConfig.INSTANCE != null
+            && HudConfig.INSTANCE.googleSpeechApiKey != null
+            && !HudConfig.INSTANCE.googleSpeechApiKey.trim().isEmpty();
+    }
+
     private void maybeEnsureWhisper() {
         String mode = resolveSttMode();
         if (!"GOOGLE".equals(mode) && LocalWhisperEngine.isSupportedPlatform()) {
@@ -229,8 +235,11 @@ public class LiveAudioSubtitleGenerator {
             return "AUTO";
         }
         String norm = raw.trim().toUpperCase(Locale.ROOT);
-        if ("WHISPER".equals(norm) || "GOOGLE".equals(norm)) {
+        if ("WHISPER".equals(norm)) {
             return norm;
+        }
+        if ("GOOGLE".equals(norm)) {
+            return hasGoogleSpeechKey() ? "GOOGLE" : "AUTO";
         }
         return "AUTO";
     }
@@ -609,7 +618,7 @@ public class LiveAudioSubtitleGenerator {
             }
         }
 
-        if (rawRms < 0.0009 || activeFraction < 0.09) {
+        if (rawRms < 0.0009 || activeFraction < 0.09 || !hasGoogleSpeechKey()) {
             return whisperRes;
         }
 
@@ -668,8 +677,15 @@ public class LiveAudioSubtitleGenerator {
     }
 
     private RecognitionResult callGoogleSpeechV2(byte[] pcm16, int sampleRate, String lang) {
+        String apiKey = HudConfig.INSTANCE != null && HudConfig.INSTANCE.googleSpeechApiKey != null
+            ? HudConfig.INSTANCE.googleSpeechApiKey.trim()
+            : "";
+        if (apiKey.isEmpty()) {
+            return null;
+        }
         try {
-            String url = GOOGLE_SPEECH_BASE + "&lang=" + URLEncoder.encode(lang, StandardCharsets.UTF_8);
+            String url = GOOGLE_SPEECH_URL_PREFIX + URLEncoder.encode(apiKey, StandardCharsets.UTF_8)
+                + "&lang=" + URLEncoder.encode(lang, StandardCharsets.UTF_8);
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(6))
