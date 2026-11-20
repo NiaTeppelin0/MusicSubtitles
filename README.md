@@ -119,7 +119,7 @@ MusicSubtitles/
 
 ## 👥 Авторство и контакты
 
-* **Автор:** Ния (`Nia_Teppelin_0`)
+* **Автор:** Ния (`Nia_Teppelin_`)
 * **Официальный Telegram:** [@TG_Nia_Teppelin0](https://t.me/TG_Nia_Teppelin0)
 
 ---
